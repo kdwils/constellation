@@ -1,0 +1,15 @@
+[package]
+edition = "2024"
+name = "constellation"
+version = "0.1.0"
+
+[dependencies]
+axum = {version = "0.8.4", features = ["macros"]}
+chrono = "0.4.41"
+futures = "0.3.31"
+k8s-openapi = {version = "0.25.0", features = ["latest"]}
+kube = {version = "1.1.0", features = ["runtime", "derive"]}
+serde = "1.0.219"
+tokio = {version = "1", features = ["full"]}
+tracing = "0.1"
+tracing-subscriber = "0.3"
