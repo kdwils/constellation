@@ -1,602 +1,531 @@
-#[derive(Debug, Serialize)]
-pub struct NamespaceHierarchy {
-    pub namespace: String,
-    pub children: Vec<ServiceChild>,
-}
+// use futures::{FutureExt, StreamExt};
+// use gateway_api::httproutes::{HTTPRoute, HTTPRouteSpec};
+// use k8s_openapi::api::core::v1::{self, Namespace, Pod, Service};
+// use kube::{
+//     Client,
+//     api::{Api, ObjectMeta},
+//     runtime::{Controller, controller::Action, watcher::Config},
+// };
+// use serde;
+// use serde::Serialize;
+// use std::{collections::BTreeMap, sync::Arc, time::Duration};
+// use tokio::sync::RwLock;
+// use tracing::{error, info};
 
-#[derive(Debug, Serialize)]
-pub struct ServiceChild {
-    pub kind: String, // always "service"
-    pub name: String,
-    pub children: Vec<PodChild>,
-}
+// #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+// pub enum ResourceKind {
+//     Namespace,
+//     Service,
+//     Pod,
+//     HTTPRoute,
+// }
 
-#[derive(Debug, Serialize)]
-pub struct PodChild {
-    pub kind: String, // always "pod"
-    pub name: String,
-}
-// ...existing code...
-use futures::{FutureExt, StreamExt};
-use k8s_openapi::api::core::v1::{self, Namespace, Pod, Service};
-use kube::{
-    Client,
-    api::{Api, ObjectMeta},
-    runtime::{Controller, controller::Action, watcher::Config},
-};
-use serde::Serialize;
-use std::{collections::BTreeMap, collections::HashMap, sync::Arc, time::Duration};
-use tokio::sync::RwLock;
-use tracing::{debug, error, info, warn};
+// #[derive(Debug, Clone)]
+// pub enum ResourceSpec {
+//     NamespaceSpec(v1::NamespaceSpec),
+//     ServiceSpec(v1::ServiceSpec),
+//     PodSpec(v1::PodSpec),
+//     HTTPRouteSpec(HTTPRouteSpec),
+// }
 
-#[derive(Clone)]
-pub struct State {
-    pub graph: Arc<RwLock<Graph>>,
-}
+// #[derive(Debug, Clone, Serialize)]
+// pub struct HierarchyNode {
+//     pub kind: ResourceKind,
+//     pub name: String,
+//     pub children: Vec<HierarchyNode>,
+//     #[serde(skip)]
+//     pub metadata: ObjectMeta,
+//     #[serde(skip)]
+//     pub spec: Option<ResourceSpec>,
+// }
 
-impl State {
-    pub fn default() -> Self {
-        Self {
-            graph: Arc::new(RwLock::new(Graph::default())),
-        }
-    }
-    fn to_context(&self, client: Client) -> Arc<Context> {
-        Arc::new(Context {
-            state: self.clone(),
-            client: client,
-        })
-    }
-}
+// impl HierarchyNode {
+//     pub fn new(
+//         kind: ResourceKind,
+//         name: impl Into<String>,
+//         metadata: ObjectMeta,
+//         spec: Option<ResourceSpec>,
+//     ) -> Self {
+//         Self {
+//             kind,
+//             name: name.into(),
+//             children: Vec::new(),
+//             metadata,
+//             spec,
+//         }
+//     }
+// }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
-pub enum ResourceKind {
-    Namespace,
-    Pod,
-    Service,
-    Ingress,
-}
+// #[derive(Clone)]
+// pub struct State {
+//     pub hierarchy: Arc<RwLock<Vec<HierarchyNode>>>,
+// }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub enum Spec {
-    PodSpec(v1::PodSpec),
-    ServiceSpec(v1::ServiceSpec),
-    NamespaceSpec(v1::NamespaceSpec),
-}
+// impl State {
+//     pub fn default() -> Self {
+//         Self {
+//             hierarchy: Arc::new(RwLock::new(Vec::new())),
+//         }
+//     }
+//     fn to_context(&self, client: Client) -> Arc<Context> {
+//         Arc::new(Context {
+//             state: self.clone(),
+//             client,
+//         })
+//     }
+// }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
-pub struct NodeId {
-    pub namespace: Option<String>,
-    pub name: String,
-}
+// struct Context {
+//     pub state: State,
+//     pub client: Client,
+// }
 
-impl NodeId {
-    pub fn key(&self) -> String {
-        match &self.namespace {
-            Some(ns) => format!("{}/{}", ns, self.name),
-            None => self.name.clone(),
-        }
-    }
-}
+// pub async fn run(state: State) {
+//     let client = Client::try_default()
+//         .await
+//         .expect("Failed to create K8s client");
+//     let context = state.to_context(client);
 
-#[derive(Debug, Clone, Serialize)]
-pub struct Node {
-    pub id: NodeId,
-    pub kind: ResourceKind,
-    pub metadata: ObjectMeta,
-    pub spec: Spec,
-}
+//     let namespace_controller = Controller::new(
+//         Api::<Namespace>::all(context.client.clone()),
+//         Config::default().any_semantic(),
+//     )
+//     .shutdown_on_signal()
+//     .run(
+//         namespace_reconciler,
+//         namespace_error_policy,
+//         context.clone(),
+//     )
+//     .for_each(|res| async move {
+//         match res {
+//             Ok(_) => (),
+//             Err(e) => info!("namespace controller error: {:?}", e),
+//         }
+//     })
+//     .boxed();
+//     tokio::spawn(namespace_controller);
 
-impl Node {
-    pub fn new(
-        kind: ResourceKind,
-        name: impl Into<String>,
-        namespace: impl Into<String>,
-        metadata: ObjectMeta,
-        spec: Spec,
-    ) -> Self {
-        Self {
-            id: NodeId {
-                namespace: Some(namespace.into()),
-                name: name.into(),
-            },
-            kind: kind,
-            metadata: metadata,
-            spec: spec,
-        }
-    }
-}
+//     let httproute_controller = Controller::new(
+//         Api::<HTTPRoute>::all(context.client.clone()),
+//         Config::default().any_semantic(),
+//     )
+//     .shutdown_on_signal()
+//     .run(
+//         httproute_reconciler,
+//         httproute_error_policy,
+//         context.clone(),
+//     )
+//     .for_each(|res| async move {
+//         match res {
+//             Ok(_) => (),
+//             Err(e) => info!("namespace controller error: {:?}", e),
+//         }
+//     })
+//     .boxed();
+//     tokio::spawn(httproute_controller);
 
-#[derive(Debug, Clone, Serialize)]
-pub struct Edginfo {
-    pub id: String,
-    pub kind: ResourceKind,
-}
+//     let service_controller = Controller::new(
+//         Api::<Service>::all(context.client.clone()),
+//         Config::default().any_semantic(),
+//     )
+//     .shutdown_on_signal()
+//     .run(service_reconciler, service_error_policy, context.clone())
+//     .for_each(|res| async move {
+//         match res {
+//             Ok(_) => (),
+//             Err(e) => info!("service controller error: {:?}", e),
+//         }
+//     })
+//     .boxed();
+//     tokio::spawn(service_controller);
 
-#[derive(Debug, Default, Clone, Serialize)]
-pub struct Graph {
-    pub nodes: HashMap<String, Node>,
-    pub edges: HashMap<String, Vec<Edginfo>>, // parent -> [Edginfo]
-    pub reverse: HashMap<String, String>,     // child -> parent
-}
+//     let pod_controller = Controller::new(
+//         Api::<Pod>::all(context.client.clone()),
+//         Config::default().any_semantic(),
+//     )
+//     .shutdown_on_signal()
+//     .run(pod_reconciler, pod_error_policy, context.clone())
+//     .for_each(|res| async move {
+//         match res {
+//             Ok(_) => (),
+//             Err(e) => info!("pod controller error: {:?}", e),
+//         }
+//     })
+//     .boxed();
+//     tokio::spawn(pod_controller);
+// }
 
-#[derive(Debug, Serialize)]
-pub struct ResourceLink {
-    pub kind: ResourceKind,
-    pub name: String,
-}
+// async fn namespace_reconciler(
+//     namespace: Arc<Namespace>,
+//     ctx: Arc<Context>,
+// ) -> Result<Action, kube::Error> {
+//     let name = match namespace.metadata.name.as_deref() {
+//         Some(n) => n,
+//         None => return Ok(Action::await_change()),
+//     };
+//     let mut hierarchy = ctx.state.hierarchy.write().await;
+//     if !hierarchy
+//         .iter()
+//         .any(|n| n.name == name && n.kind == ResourceKind::Namespace)
+//     {
+//         let spec = namespace.spec.clone().map(ResourceSpec::NamespaceSpec);
+//         hierarchy.push(HierarchyNode::new(
+//             ResourceKind::Namespace,
+//             name,
+//             namespace.metadata.clone(),
+//             spec,
+//         ));
+//     }
+//     info!("Reconciled Namespace {}", name);
+//     Ok(Action::await_change())
+// }
 
-#[derive(Debug, Serialize)]
-pub struct ResourceChain {
-    pub chain: Vec<ResourceLink>,
-}
+// fn httproute_error_policy(
+//     _httproute: Arc<HTTPRoute>,
+//     error: &kube::Error,
+//     _ctx: Arc<Context>,
+// ) -> Action {
+//     error!(error = ?error, "httproute reconcile failed");
+//     Action::requeue(Duration::from_secs(30))
+// }
 
-impl Graph {
-    pub fn resource_chains(&self) -> Vec<ResourceChain> {
-        let parent_keys: std::collections::HashSet<_> = self.edges.keys().cloned().collect();
-        self.nodes
-            .values()
-            .filter(|node| !parent_keys.contains(&node.id.key()))
-            .map(|leaf_node| {
-                let mut chain = Vec::new();
-                let mut current_key = leaf_node.id.key();
-                let mut visited = std::collections::HashSet::new();
-                if let Some(node) = self.nodes.get(&current_key) {
-                    chain.push(ResourceLink {
-                        kind: node.kind.clone(),
-                        name: node.id.name.clone(),
-                    });
-                }
-                while let Some(parent_key) = self.reverse.get(&current_key) {
-                    if !visited.insert(parent_key.clone()) {
-                        break;
-                    }
-                    if let Some(parent_node) = self.nodes.get(parent_key) {
-                        chain.push(ResourceLink {
-                            kind: parent_node.kind.clone(),
-                            name: parent_node.id.name.clone(),
-                        });
-                    }
-                    current_key = parent_key.clone();
-                }
-                chain.reverse();
-                ResourceChain { chain }
-            })
-            .collect()
-    }
-    /// Returns a vector of namespaces, each with its children (services, pods) in a flat, readable format.
-    pub fn namespace_hierarchy(&self) -> Vec<NamespaceHierarchy> {
-        let mut result = Vec::new();
-        for ns_node in self
-            .nodes
-            .values()
-            .filter(|n| n.kind == ResourceKind::Namespace)
-        {
-            let ns_name = &ns_node.id.name;
-            // Collect all services in this namespace
-            let services: Vec<ServiceChild> = self
-                .nodes
-                .values()
-                .filter(|n| {
-                    n.kind == ResourceKind::Service && n.id.namespace.as_deref() == Some(ns_name)
-                })
-                .map(|svc| {
-                    // Collect pods attached to this service
-                    let pods: Vec<PodChild> = self
-                        .edges
-                        .get(&svc.id.key())
-                        .map(|edges| {
-                            edges
-                                .iter()
-                                .filter_map(|e| self.nodes.get(&e.id))
-                                .filter(|n| n.kind == ResourceKind::Pod)
-                                .map(|pod| PodChild {
-                                    kind: "pod".to_string(),
-                                    name: pod.id.name.clone(),
-                                })
-                                .collect()
-                        })
-                        .unwrap_or_default();
-                    ServiceChild {
-                        kind: "service".to_string(),
-                        name: svc.id.name.clone(),
-                        children: pods,
-                    }
-                })
-                .collect();
+// fn namespace_error_policy(_ns: Arc<Namespace>, error: &kube::Error, _ctx: Arc<Context>) -> Action {
+//     error!(error = ?error, "namespace reconcile failed");
+//     Action::requeue(Duration::from_secs(30))
+// }
 
-            result.push(NamespaceHierarchy {
-                namespace: ns_name.clone(),
-                children: services,
-            });
-        }
-        result
-    }
-}
+// fn service_error_policy(_ns: Arc<Service>, error: &kube::Error, _ctx: Arc<Context>) -> Action {
+//     error!(error = ?error, "namespace reconcile failed");
+//     Action::requeue(Duration::from_secs(30))
+// }
 
-impl Graph {
-    pub fn add_node(&mut self, node: Node) {
-        self.nodes.insert(node.id.key(), node);
-    }
+// async fn service_reconciler(
+//     service: Arc<Service>,
+//     ctx: Arc<Context>,
+// ) -> Result<Action, kube::Error> {
+//     let name = match service.metadata.name.as_deref() {
+//         Some(n) => n,
+//         None => return Ok(Action::await_change()),
+//     };
+//     let namespace = match service.metadata.namespace.as_deref() {
+//         Some(ns) => ns,
+//         None => return Ok(Action::await_change()),
+//     };
+//     let spec = service.spec.clone().map(ResourceSpec::ServiceSpec);
 
-    pub fn add_edge(&mut self, parent: &NodeId, child: &NodeId) {
-        let pkey = parent.key();
-        let ckey = child.key();
-        if self.nodes.contains_key(&pkey) && self.nodes.contains_key(&ckey) {
-            let kind = self.nodes[&ckey].kind.clone();
-            info!("Adding edge: {} -> {} ({:?})", pkey, ckey, kind);
-            self.edges.entry(pkey.clone()).or_default().push(Edginfo {
-                id: ckey.clone(),
-                kind,
-            });
-            self.reverse.insert(ckey, pkey);
-        }
-    }
+//     let mut hierarchy = ctx.state.hierarchy.write().await;
 
-    pub fn remove_node(&mut self, id: &NodeId) {
-        info!("Removing node: {}", id.key());
-        let key = id.key();
-        self.nodes.remove(&key);
+//     let route_indices: Vec<usize> = hierarchy
+//         .iter()
+//         .enumerate()
+//         .filter(|(_, hr)| {
+//             hr.kind == ResourceKind::HTTPRoute
+//                 && hr.metadata.namespace.as_deref() == Some(namespace)
+//                 && match &hr.spec {
+//                     Some(ResourceSpec::HTTPRouteSpec(spec)) => spec
+//                         .parent_refs
+//                         .as_ref()
+//                         .map_or(false, |refs| refs.iter().any(|pr| pr.name == name)),
+//                     _ => false,
+//                 }
+//         })
+//         .map(|(i, _)| i)
+//         .collect();
 
-        if let Some(children) = self.edges.remove(&key) {
-            for edge in children {
-                self.reverse.remove(&edge.id);
-                if let Some(ns_id) = self.find_namespace_for(&edge.id) {
-                    self.add_edge(
-                        &ns_id,
-                        &NodeId {
-                            namespace: self.nodes[&edge.id].id.namespace.clone(),
-                            name: self.nodes[&edge.id].id.name.clone(),
-                        },
-                    );
-                }
-            }
-        }
+//     let ns_index = match hierarchy
+//         .iter()
+//         .position(|n| n.name == namespace && n.kind == ResourceKind::Namespace)
+//     {
+//         Some(i) => i,
+//         None => {
+//             hierarchy.push(HierarchyNode::new(
+//                 ResourceKind::Namespace,
+//                 namespace,
+//                 ObjectMeta {
+//                     name: Some(namespace.to_string()),
+//                     namespace: Some(namespace.to_string()),
+//                     ..Default::default()
+//                 },
+//                 None,
+//             ));
+//             hierarchy.len() - 1
+//         }
+//     };
 
-        if let Some(parent) = self.reverse.remove(&key) {
-            if let Some(children) = self.edges.get_mut(&parent) {
-                children.retain(|edge| edge.id != key);
-            }
-        }
-    }
+//     if !route_indices.is_empty() {
+//         for &i in &route_indices {
+//             let route_node = &mut hierarchy[i];
+//             if !route_node
+//                 .children
+//                 .iter()
+//                 .any(|c| c.name == name && c.kind == ResourceKind::Service)
+//             {
+//                 route_node.children.push(HierarchyNode::new(
+//                     ResourceKind::Service,
+//                     name,
+//                     service.metadata.clone(),
+//                     spec.clone(),
+//                 ));
+//             }
+//         }
+//         return Ok(Action::await_change());
+//     }
 
-    fn find_namespace_for(&self, child_key: &str) -> Option<NodeId> {
-        let cnode = self.nodes.get(child_key)?;
-        let ns = cnode.id.namespace.as_ref()?;
-        self.nodes
-            .values()
-            .find(|n| n.kind == ResourceKind::Namespace && n.id.name == *ns)
-            .map(|n| n.id.clone())
-    }
-}
+//     let ns_node = &mut hierarchy[ns_index];
 
-struct Context {
-    pub state: State,
-    pub client: Client,
-}
+//     if let Some(svc_node) = ns_node
+//         .children
+//         .iter_mut()
+//         .find(|c| c.name == name && c.kind == ResourceKind::Service)
+//     {
+//         svc_node.metadata = service.metadata.clone();
+//         svc_node.spec = spec;
+//         return Ok(Action::await_change());
+//     }
 
-pub async fn run(state: State) {
-    let client = Client::try_default()
-        .await
-        .expect("Failed to create K8s client");
+//     ns_node.children.push(HierarchyNode::new(
+//         ResourceKind::Service,
+//         name,
+//         service.metadata.clone(),
+//         spec.clone(),
+//     ));
 
-    let context = state.to_context(client);
+//     Ok(Action::await_change())
+// }
 
-    let namespace_controller = Controller::new(
-        Api::<Namespace>::all(context.client.clone()),
-        Config::default().any_semantic(),
-    )
-    .shutdown_on_signal()
-    .run(
-        namespace_reconciler,
-        namespace_error_policy,
-        context.clone(),
-    )
-    .for_each(|res| async move {
-        match res {
-            Ok(_) => (),
-            Err(e) => info!("namespace controller error: {:?}", e),
-        }
-    })
-    .boxed();
+// async fn pod_reconciler(pod: Arc<Pod>, ctx: Arc<Context>) -> Result<Action, kube::Error> {
+//     let name = match pod.metadata.name.as_deref() {
+//         Some(n) => n,
+//         None => return Ok(Action::await_change()),
+//     };
 
-    tokio::spawn(namespace_controller);
+//     let namespace = match pod.metadata.namespace.as_deref() {
+//         Some(ns) => ns,
+//         None => return Ok(Action::await_change()),
+//     };
 
-    let service_controller = Controller::new(
-        Api::<Service>::all(context.client.clone()),
-        Config::default().any_semantic(),
-    )
-    .shutdown_on_signal()
-    .run(service_reconciler, service_error_policy, context.clone())
-    .for_each(|res| async move {
-        match res {
-            Ok(_) => (),
-            Err(e) => info!("service controller error: {:?}", e),
-        }
-    })
-    .boxed();
-    tokio::spawn(service_controller);
+//     let spec = pod.spec.clone().map(ResourceSpec::PodSpec);
+//     let pod_labels = match pod.metadata.labels.as_ref() {
+//         Some(l) => l,
+//         None => &BTreeMap::new(),
+//     };
 
-    let pod_controller = Controller::new(
-        Api::<Pod>::all(context.client.clone()),
-        Config::default().any_semantic(),
-    )
-    .shutdown_on_signal()
-    .run(pod_reconciler, pod_error_policy, context.clone())
-    .for_each(|res| async move {
-        match res {
-            Ok(_) => (),
-            Err(e) => info!("controller error: {:?}", e),
-        }
-    })
-    .boxed();
+//     let mut hierarchy = ctx.state.hierarchy.write().await;
 
-    tokio::spawn(pod_controller);
-}
+//     let ns_node = match hierarchy
+//         .iter_mut()
+//         .find(|n| n.name == namespace && n.kind == ResourceKind::Namespace)
+//     {
+//         Some(node) => node,
+//         None => return Ok(Action::await_change()),
+//     };
 
-async fn pod_reconciler(pod: Arc<Pod>, ctx: Arc<Context>) -> Result<Action, kube::Error> {
-    let name = match pod.metadata.name.as_deref() {
-        Some(n) => n,
-        None => return Ok(Action::await_change()),
-    };
-    let namespace = match pod.metadata.namespace.as_deref() {
-        Some(ns) => ns,
-        None => return Ok(Action::await_change()),
-    };
-    let spec = match pod.spec.clone() {
-        Some(s) => Spec::PodSpec(s),
-        None => return Ok(Action::await_change()),
-    };
+//     let mut attached = false;
+//     for svc_node in ns_node
+//         .children
+//         .iter_mut()
+//         .filter(|c| c.kind == ResourceKind::Service)
+//     {
+//         let s = match &svc_node.spec {
+//             Some(ResourceSpec::ServiceSpec(s)) => s,
+//             _ => continue,
+//         };
 
-    let node_id = NodeId {
-        namespace: Some(namespace.to_string()),
-        name: name.to_string(),
-    };
-    let mut graph = ctx.state.graph.write().await;
+//         let selector = match &s.selector {
+//             Some(sel) if !sel.is_empty() => sel,
+//             _ => continue,
+//         };
 
-    if pod.metadata.deletion_timestamp.is_some() {
-        graph.remove_node(&node_id);
-        return Ok(Action::await_change());
-    }
+//         if selector.iter().all(|(k, v)| pod_labels.get(k) == Some(v)) {
+//             svc_node.children.push(HierarchyNode::new(
+//                 ResourceKind::Pod,
+//                 name,
+//                 pod.metadata.clone(),
+//                 spec.clone(),
+//             ));
+//             attached = true;
+//         }
+//     }
 
-    let pod_node = Node::new(
-        ResourceKind::Pod,
-        name,
-        namespace,
-        pod.metadata.clone(),
-        spec.clone(),
-    );
-    graph.add_node(pod_node.clone());
+//     if !attached {
+//         ns_node.children.push(HierarchyNode::new(
+//             ResourceKind::Pod,
+//             name,
+//             pod.metadata.clone(),
+//             spec.clone(),
+//         ));
+//     }
 
-    let empty_labels = BTreeMap::new();
-    let pod_labels = pod.metadata.labels.as_ref().unwrap_or(&empty_labels);
+//     Ok(Action::await_change())
+// }
 
-    let service_to_attach = graph
-        .nodes
-        .values()
-        .find(|svc_node| {
-            if svc_node.kind != ResourceKind::Service {
-                return false;
-            }
-            if svc_node.id.namespace.as_deref() != Some(namespace) {
-                return false;
-            }
-            let selector = match &svc_node.spec {
-                Spec::ServiceSpec(s) => s.selector.as_ref(),
-                _ => return false,
-            };
-            if selector.is_none() {
-                return false;
-            }
-            let sel = selector.unwrap();
-            if sel.is_empty() {
-                return false;
-            }
-            if !sel.iter().all(|(k, v)| pod_labels.get(k) == Some(v)) {
-                return false;
-            }
-            if pod_labels
-                .iter()
-                .filter(|(k, _)| sel.contains_key(*k))
-                .count()
-                != sel.len()
-            {
-                return false;
-            }
-            true
-        })
-        .map(|s| s.id.clone());
+// async fn httproute_reconciler(
+//     route: Arc<HTTPRoute>,
+//     ctx: Arc<Context>,
+// ) -> Result<Action, kube::Error> {
+//     let route_name = match route.metadata.name.as_deref() {
+//         Some(n) => n,
+//         None => return Ok(Action::await_change()),
+//     };
+//     let namespace = match route.metadata.namespace.as_deref() {
+//         Some(ns) => ns,
+//         None => return Ok(Action::await_change()),
+//     };
+//     let route_spec = Some(ResourceSpec::HTTPRouteSpec(route.spec.clone()));
 
-    if let Some(parent_key) = graph.reverse.get(&node_id.key()).cloned() {
-        if let Some(children) = graph.edges.get_mut(&parent_key) {
-            children.retain(|e| e.id != node_id.key());
-        }
-        graph.reverse.remove(&node_id.key());
-    }
+//     let mut hierarchy = ctx.state.hierarchy.write().await;
 
-    if let Some(svc_id) = service_to_attach {
-        graph.add_edge(&svc_id, &node_id);
-        return Ok(Action::await_change());
-    }
-    let ns_id = NodeId {
-        namespace: Some(namespace.to_string()),
-        name: namespace.to_string(),
-    };
-    if graph.nodes.contains_key(&ns_id.key()) {
-        graph.add_edge(&ns_id, &node_id);
-    }
-    Ok(Action::await_change())
-}
+//     let ns_index = match hierarchy
+//         .iter()
+//         .position(|n| n.name == namespace && n.kind == ResourceKind::Namespace)
+//     {
+//         Some(i) => i,
+//         None => {
+//             hierarchy.push(HierarchyNode::new(
+//                 ResourceKind::Namespace,
+//                 namespace,
+//                 ObjectMeta {
+//                     name: Some(namespace.to_string()),
+//                     namespace: Some(namespace.to_string()),
+//                     ..Default::default()
+//                 },
+//                 None,
+//             ));
+//             hierarchy.len() - 1
+//         }
+//     };
 
-fn pod_error_policy(_pod: Arc<Pod>, error: &kube::Error, _ctx: Arc<Context>) -> Action {
-    let error_str = format!("{:?}", error);
-    if error_str.contains("peer closed connection without sending TLS close_notify") {
-        return Action::requeue(Duration::from_secs(30));
-    }
-    error!(error = ?error, "pod reconcile failed");
-    Action::requeue(Duration::from_secs(30))
-}
+//     let ns_node = &mut hierarchy[ns_index];
 
-async fn namespace_reconciler(
-    namespace: Arc<Namespace>,
-    ctx: Arc<Context>,
-) -> Result<Action, kube::Error> {
-    let name = match namespace.metadata.name.as_deref() {
-        Some(n) => n,
-        None => return Ok(Action::await_change()),
-    };
+//     let route_index = match ns_node
+//         .children
+//         .iter()
+//         .position(|c| c.name == route_name && c.kind == ResourceKind::HTTPRoute)
+//     {
+//         Some(i) => i,
+//         None => {
+//             ns_node.children.push(HierarchyNode::new(
+//                 ResourceKind::HTTPRoute,
+//                 route_name,
+//                 route.metadata.clone(),
+//                 route_spec.clone(),
+//             ));
+//             ns_node.children.len() - 1
+//         }
+//     };
 
-    let node_id = NodeId {
-        namespace: Some(name.to_string()),
-        name: name.to_string(),
-    };
+//     let services_to_attach: Vec<HierarchyNode> = ns_node
+//         .children
+//         .iter()
+//         .filter(|child| {
+//             child.kind == ResourceKind::Service
+//                 && route_spec.as_ref().and_then(|r| {
+//                     if let ResourceSpec::HTTPRouteSpec(spec) = r {
+//                         Some(
+//                             spec.parent_refs
+//                                 .as_ref()
+//                                 .map_or(false, |refs| refs.iter().any(|pr| pr.name == child.name)),
+//                         )
+//                     } else {
+//                         None
+//                     }
+//                 }) == Some(true)
+//         })
+//         .cloned()
+//         .collect();
 
-    let node = Node::new(
-        ResourceKind::Namespace,
-        name,
-        name,
-        namespace.metadata.clone(),
-        Spec::NamespaceSpec(namespace.spec.clone().unwrap_or_default()),
-    );
+//     info!(services = ?services_to_attach);
 
-    let mut graph = ctx.state.graph.write().await;
-    graph.add_node(node);
+//     // Step 2: Mutable borrow to route node
+//     let route_node = &mut ns_node.children[route_index];
+//     route_node.metadata = route.metadata.clone();
+//     route_node.spec = route_spec.clone();
 
-    // Attach all existing non-Namespace nodes in this namespace
-    let children: Vec<NodeId> = graph
-        .nodes
-        .values()
-        .filter(|child| {
-            child.id.namespace.as_deref() == Some(name)
-                && child.kind != ResourceKind::Namespace
-                && child.id != node_id // prevent self-loop
-        })
-        .map(|c| c.id.clone())
-        .collect();
+//     // Step 3: Attach cloned service nodes
+//     for svc_node in services_to_attach {
+//         if !route_node.children.iter().any(|c| c.name == svc_node.name) {
+//             route_node.children.push(svc_node);
+//         }
+//     }
 
-    for child_id in children {
-        graph.add_edge(&node_id, &child_id);
-    }
+//     Ok(Action::await_change())
+// }
 
-    info!("Reconciled Namespace {}", name);
-    Ok(Action::await_change())
-}
+// // async fn httproute_reconciler(
+// //     route: Arc<HTTPRoute>,
+// //     ctx: Arc<Context>,
+// // ) -> Result<Action, kube::Error> {
+// //     let route_name = match route.metadata.name.as_deref() {
+// //         Some(n) => n,
+// //         None => return Ok(Action::await_change()),
+// //     };
 
-fn namespace_error_policy(
-    _service: Arc<Namespace>,
-    error: &kube::Error,
-    _ctx: Arc<Context>,
-) -> Action {
-    let error_str = format!("{:?}", error);
-    if error_str.contains("peer closed connection without sending TLS close_notify") {
-        return Action::requeue(Duration::from_secs(30));
-    }
-    error!(error = ?error, "namespace reconcile failed");
-    Action::requeue(Duration::from_secs(30))
-}
+// //     let namespace = match route.metadata.namespace.as_deref() {
+// //         Some(ns) => ns,
+// //         None => return Ok(Action::await_change()),
+// //     };
 
-async fn service_reconciler(
-    service: Arc<Service>,
-    ctx: Arc<Context>,
-) -> Result<Action, kube::Error> {
-    let name = match service.metadata.name.as_deref() {
-        Some(n) => n,
-        None => return Ok(Action::await_change()),
-    };
-    let namespace = match service.metadata.namespace.as_deref() {
-        Some(ns) => ns,
-        None => return Ok(Action::await_change()),
-    };
-    let spec = match service.spec.clone() {
-        Some(s) => Spec::ServiceSpec(s),
-        None => return Ok(Action::await_change()),
-    };
+// //     let route_spec = Some(ResourceSpec::HTTPRouteSpec(route.spec.clone()));
 
-    let node_id = NodeId {
-        namespace: Some(namespace.to_string()),
-        name: name.to_string(),
-    };
-    let mut graph = ctx.state.graph.write().await;
+// //     let mut hierarchy = ctx.state.hierarchy.write().await;
 
-    if service.metadata.deletion_timestamp.is_some() {
-        graph.remove_node(&node_id);
-        return Ok(Action::await_change());
-    }
+// //     let ns_node = match hierarchy
+// //         .iter_mut()
+// //         .find(|n| n.name == namespace && n.kind == ResourceKind::Namespace)
+// //     {
+// //         Some(node) => node,
+// //         None => return Ok(Action::await_change()),
+// //     };
 
-    let ns_id = NodeId {
-        namespace: Some(namespace.to_string()),
-        name: namespace.to_string(),
-    };
-    graph.nodes.entry(ns_id.key()).or_insert_with(|| {
-        Node::new(
-            ResourceKind::Namespace,
-            namespace,
-            namespace,
-            ObjectMeta {
-                name: Some(namespace.to_string()),
-                namespace: Some(namespace.to_string()),
-                ..Default::default()
-            },
-            Spec::NamespaceSpec(v1::NamespaceSpec::default()),
-        )
-    });
+// //     let route_node: &mut HierarchyNode = match ns_node
+// //         .children
+// //         .iter_mut()
+// //         .find(|c| c.name == route_name && c.kind == ResourceKind::HTTPRoute)
+// //     {
+// //         Some(node) => {
+// //             node.metadata = route.metadata.clone();
+// //             node.spec = route_spec.clone();
+// //             node
+// //         }
+// //         None => {
+// //             ns_node.children.push(HierarchyNode::new(
+// //                 ResourceKind::HTTPRoute,
+// //                 route_name,
+// //                 route.metadata.clone(),
+// //                 route_spec.clone(),
+// //             ));
+// //             ns_node.children.last_mut().unwrap()
+// //         }
+// //     };
 
-    let svc_node = Node::new(
-        ResourceKind::Service,
-        name,
-        namespace,
-        service.metadata.clone(),
-        spec.clone(),
-    );
-    graph.add_node(svc_node.clone());
-    if let Some(parent_key) = graph.reverse.get(&node_id.key()).cloned() {
-        if let Some(children) = graph.edges.get_mut(&parent_key) {
-            children.retain(|e| e.id != node_id.key());
-        }
-        graph.reverse.remove(&node_id.key());
-    }
-    graph.add_edge(&ns_id, &node_id);
+// //     let service_indices: Vec<usize> = ns_node
+// //         .children
+// //         .iter()
+// //         .enumerate()
+// //         .filter(|(_, svc)| {
+// //             svc.kind == ResourceKind::Service
+// //                 && match route_node.spec.clone() {
+// //                     Some(ResourceSpec::HTTPRouteSpec(spec)) => spec
+// //                         .parent_refs
+// //                         .as_ref()
+// //                         .map_or(false, |refs| refs.iter().any(|pr| pr.name == svc.name)),
+// //                     _ => false,
+// //                 }
+// //         })
+// //         .map(|(i, _)| i)
+// //         .collect();
 
-    let selector = match spec {
-        Spec::ServiceSpec(ref s) => match &s.selector {
-            Some(sel) => sel,
-            None => return Ok(Action::await_change()),
-        },
-        _ => return Ok(Action::await_change()),
-    };
+// //     for idx in service_indices {
+// //         let svc_node = ns_node.children[idx].clone();
+// //         if !route_node.children.iter().any(|c| c.name == svc_node.name) {
+// //             route_node.children.push(svc_node);
+// //         }
+// //     }
 
-    let empty_labels = BTreeMap::new();
-    let pods_to_attach: Vec<NodeId> = graph
-        .nodes
-        .values()
-        .filter(|pod| {
-            pod.kind == ResourceKind::Pod
-                && pod.id.namespace.as_deref() == Some(namespace)
-                && selector.iter().all(|(k, v)| {
-                    pod.metadata.labels.as_ref().unwrap_or(&empty_labels).get(k) == Some(v)
-                })
-        })
-        .map(|p| p.id.clone())
-        .collect();
+// //     Ok(Action::await_change())
+// // }
 
-    for pod_id in pods_to_attach {
-        graph.add_edge(&node_id, &pod_id);
-
-        if let Some(ns_for_pod) = graph.find_namespace_for(&pod_id.key()) {
-            if let Some(children) = graph.edges.get_mut(&ns_for_pod.key()) {
-                children.retain(|e| e.id != pod_id.key());
-            }
-            graph.reverse.remove(&pod_id.key());
-        }
-    }
-
-    Ok(Action::await_change())
-}
-
-fn service_error_policy(_service: Arc<Service>, error: &kube::Error, _ctx: Arc<Context>) -> Action {
-    let error_str = format!("{:?}", error);
-    if error_str.contains("peer closed connection without sending TLS close_notify") {
-        return Action::requeue(Duration::from_secs(30));
-    }
-    error!(error = ?error, "service reconcile failed");
-    Action::requeue(Duration::from_secs(30))
-}
+// fn pod_error_policy(_pod: Arc<Pod>, error: &kube::Error, _ctx: Arc<Context>) -> Action {
+//     error!(error = ?error, "pod reconcile failed");
+//     Action::requeue(Duration::from_secs(30))
+// }

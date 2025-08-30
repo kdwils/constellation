@@ -1,24 +1,24 @@
-mod controller;
-mod http;
+// mod controller;
+mod router;
 mod watcher;
 
-use controller::State;
 use tracing_subscriber;
+use watcher::State;
 
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt().compact().init();
 
     let state = State::default();
-    let router = http::new_router(state.clone()).await;
-    let controller = tokio::spawn(controller::run(state.clone()));
+    let router = router::new_router(state.clone()).await;
+    let watchers = tokio::spawn(watcher::run(state.clone()));
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080")
         .await
         .expect("couldn't bind to 8080");
 
     let http = axum::serve(listener, router).with_graceful_shutdown(shutdown_signal());
 
-    let (_, server_result) = tokio::join!(http, controller);
+    let (_, server_result) = tokio::join!(http, watchers);
     server_result.unwrap();
 }
 
