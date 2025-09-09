@@ -90,6 +90,82 @@ cd frontend && npm run lint
 ```
 
 ### Coding Standards
-* Structure code to not use else statements by returning early or checking opposites
+
+**NEVER use `else` statements. This is strictly forbidden.**
+
+Structure code to avoid `else` by:
+- Returning early from functions
+- Using guard clauses
+- Inverting conditions when needed
+- Using functional programming patterns
+
+#### Examples
+
+**❌ BAD - Using else statements:**
+```rust
+// Example 1: Nested if-else hell (FORBIDDEN)
+if let Some(status) = &service.status {
+    if let Some(load_balancer) = &status.load_balancer {
+        if let Some(ingress_list) = &load_balancer.ingress {
+            // do something
+        } else {
+            // error case
+        }
+    } else {
+        // error case  
+    }
+} else {
+    // error case
+}
+
+// Example 2: Simple if-else (FORBIDDEN)
+fn process_user(user: Option<User>) -> String {
+    if let Some(u) = user {
+        u.name
+    } else {
+        "Unknown".to_string()
+    }
+}
+```
+
+**✅ GOOD - No else statements:**
+```rust
+// Example 1: Early returns and guard clauses
+fn extract_load_balancer_ips(service: &Service) -> Vec<String> {
+    let Some(status) = &service.status else {
+        return Vec::new();
+    };
+    
+    let Some(load_balancer) = &status.load_balancer else {
+        return Vec::new();
+    };
+    
+    let Some(ingress_list) = &load_balancer.ingress else {
+        return Vec::new();
+    };
+    
+    ingress_list
+        .iter()
+        .filter_map(|ingress| ingress.ip.as_ref().or(ingress.hostname.as_ref()))
+        .cloned()
+        .collect()
+}
+
+// Example 2: Using unwrap_or/unwrap_or_default
+fn process_user(user: Option<User>) -> String {
+    user.map(|u| u.name).unwrap_or_else(|| "Unknown".to_string())
+}
+
+// Example 3: Pattern matching without else
+fn handle_result(result: Result<i32, &str>) -> i32 {
+    match result {
+        Ok(value) => value,
+        Err(_) => return 0,
+    }
+}
+```
+
+**Additional rules:**
 * Return early when possible
 * Only add comments that are impactful
+* NEVER write obvious comments that restate what the code does

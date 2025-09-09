@@ -12,7 +12,7 @@ export function MetadataRow({ icon, children, alignItems = "center" }: MetadataR
     
     return (
         <div className={`flex ${alignmentClass} space-x-1`}>
-            <span className={`text-slate-500 ${iconClass}`}>{icon}</span>
+            <span className={`text-slate-500 ${iconClass}`}>{icon}:</span>
             {children}
         </div>
     );

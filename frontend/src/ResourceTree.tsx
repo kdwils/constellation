@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { ResourceNode } from "./ResourceNode";
+import type { ResourceNode, ContainerPortInfo } from "./ResourceNode";
 import { NamespaceHeader } from "./components/NamespaceHeader";
 import { ServiceBox } from "./components/Service";
 import { PodBox } from "./components/Pod";
@@ -24,13 +24,14 @@ interface ResourceNodeItemProps {
     node: ResourceNode;
     level?: number;
     serviceSelectors?: Record<string, string>;
+    targetPorts?: number[];
+    targetPortNames?: string[];
     backendRefs?: string[];
 }
 
-function ResourceNodeItem({ node, level = 0, serviceSelectors, backendRefs }: ResourceNodeItemProps) {
+function ResourceNodeItem({ node, level = 0, serviceSelectors, targetPorts, targetPortNames, backendRefs }: ResourceNodeItemProps) {
     const [isCollapsed, setIsCollapsed] = useState(true);
 
-    // Collect backend references from HTTPRoute siblings
     const collectBackendRefs = (relatives?: ResourceNode[]): string[] => {
         if (!relatives) return [];
         return relatives
@@ -57,7 +58,7 @@ function ResourceNodeItem({ node, level = 0, serviceSelectors, backendRefs }: Re
                                 const backendRefs = collectBackendRefs(node.relatives);
                                 return (
                                     <div key={childNode.name} className="border border-gray-200 rounded-lg p-4 bg-gray-50/50 space-y-2">
-                                        <ResourceNodeItem node={childNode} level={level + 1} serviceSelectors={serviceSelectors} backendRefs={backendRefs} />
+                                        <ResourceNodeItem node={childNode} level={level + 1} serviceSelectors={serviceSelectors} targetPorts={targetPorts} targetPortNames={targetPortNames} backendRefs={backendRefs} />
                                     </div>
                                 );
                             })
@@ -77,7 +78,7 @@ function ResourceNodeItem({ node, level = 0, serviceSelectors, backendRefs }: Re
             <div className="space-y-2">
                 <IngressBox name={node.name} />
                 {node.relatives && node.relatives.map((childNode) => (
-                    <ResourceNodeItem key={childNode.name} node={childNode} level={level + 1} serviceSelectors={serviceSelectors} backendRefs={backendRefs} />
+                    <ResourceNodeItem key={childNode.name} node={childNode} level={level + 1} serviceSelectors={serviceSelectors} targetPorts={targetPorts} targetPortNames={targetPortNames} backendRefs={backendRefs} />
                 ))}
             </div>
         );
@@ -88,7 +89,7 @@ function ResourceNodeItem({ node, level = 0, serviceSelectors, backendRefs }: Re
             <div className="space-y-2">
                 <HttpRouteBox name={node.name} hostnames={node.hostnames} backend_refs={node.backend_refs} />
                 {node.relatives && node.relatives.map((childNode) => (
-                    <ResourceNodeItem key={childNode.name} node={childNode} level={level + 1} serviceSelectors={serviceSelectors} backendRefs={backendRefs} />
+                    <ResourceNodeItem key={childNode.name} node={childNode} level={level + 1} serviceSelectors={serviceSelectors} targetPorts={targetPorts} targetPortNames={targetPortNames} backendRefs={backendRefs} />
                 ))}
             </div>
         );
@@ -96,11 +97,21 @@ function ResourceNodeItem({ node, level = 0, serviceSelectors, backendRefs }: Re
 
     if (node.kind === "Service") {
         const isTargetedByRoute = backendRefs?.includes(node.name) || false;
+        
+        const childContainerPorts: ContainerPortInfo[] = [];
+        if (node.relatives) {
+            for (const childNode of node.relatives) {
+                if (childNode.kind === "Pod" && childNode.container_ports) {
+                    childContainerPorts.push(...childNode.container_ports);
+                }
+            }
+        }
+        
         return (
             <div className="space-y-2">
-                <ServiceBox name={node.name} selectors={node.selectors} ports={node.ports} isTargetedByRoute={isTargetedByRoute} />
+                <ServiceBox name={node.name} selectors={node.selectors} portMappings={node.port_mappings} isTargetedByRoute={isTargetedByRoute} serviceType={node.service_type} clusterIp={node.cluster_ip} externalIps={node.external_ips} childContainerPorts={childContainerPorts} />
                 {node.relatives && node.relatives.map((childNode) => (
-                    <ResourceNodeItem key={childNode.name} node={childNode} level={level + 1} serviceSelectors={node.selectors} backendRefs={backendRefs} />
+                    <ResourceNodeItem key={childNode.name} node={childNode} level={level + 1} serviceSelectors={node.selectors} targetPorts={node.target_ports} targetPortNames={node.target_port_names} backendRefs={backendRefs} />
                 ))}
             </div>
         );
@@ -109,9 +120,18 @@ function ResourceNodeItem({ node, level = 0, serviceSelectors, backendRefs }: Re
     if (node.kind === "Pod") {
         return (
             <div className="space-y-2">
-                <PodBox name={node.name} labels={node.labels} ports={node.ports} serviceSelectors={serviceSelectors} phase={node.phase} />
+                <PodBox 
+                    name={node.name} 
+                    labels={node.labels} 
+                    containerPorts={node.container_ports}
+                    serviceSelectors={serviceSelectors} 
+                    targetPorts={targetPorts}
+                    targetPortNames={targetPortNames}
+                    phase={node.phase} 
+                    podIp={node.pod_ip} 
+                />
                 {node.relatives && node.relatives.map((childNode) => (
-                    <ResourceNodeItem key={childNode.name} node={childNode} level={level + 1} serviceSelectors={serviceSelectors} backendRefs={backendRefs} />
+                    <ResourceNodeItem key={childNode.name} node={childNode} level={level + 1} serviceSelectors={serviceSelectors} targetPorts={targetPorts} targetPortNames={targetPortNames} backendRefs={backendRefs} />
                 ))}
             </div>
         );
