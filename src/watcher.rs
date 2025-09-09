@@ -186,7 +186,11 @@ fn extract_resource_metadata(
                             }
                         }
                     }
-                    let backend_refs = if backends.is_empty() { None } else { Some(backends) };
+                    let backend_refs = if backends.is_empty() {
+                        None
+                    } else {
+                        Some(backends)
+                    };
 
                     (hostnames, backend_refs)
                 }
@@ -206,10 +210,7 @@ fn extract_resource_metadata(
                 Some(ResourceSpec::ServiceSpec(spec)) => {
                     let selectors = spec.selector.clone();
                     let ports = spec.ports.as_ref().map(|port_list| {
-                        port_list
-                            .iter()
-                            .map(|p| p.port as u32)
-                            .collect::<Vec<_>>()
+                        port_list.iter().map(|p| p.port as u32).collect::<Vec<_>>()
                     });
                     (selectors, ports)
                 }
@@ -236,7 +237,11 @@ fn extract_resource_metadata(
                             }
                         }
                     }
-                    if port_list.is_empty() { None } else { Some(port_list) }
+                    if port_list.is_empty() {
+                        None
+                    } else {
+                        Some(port_list)
+                    }
                 }
                 _ => None,
             };
@@ -264,10 +269,10 @@ fn new_pod(pod: &Pod) -> HierarchyNode {
     let spec = pod.spec.clone().map(ResourceSpec::PodSpec);
     let metadata = pod.metadata.clone();
     let mut resource_metadata = extract_resource_metadata(&ResourceKind::Pod, &metadata, &spec);
-    
+
     // Extract phase from pod status
     resource_metadata.phase = pod.status.as_ref().and_then(|status| status.phase.clone());
-    
+
     HierarchyNode {
         kind: ResourceKind::Pod,
         name: pod.metadata.name.clone().unwrap_or_default(),
@@ -282,7 +287,7 @@ fn new_service(service: &Service) -> HierarchyNode {
     let spec = service.spec.clone().map(ResourceSpec::ServiceSpec);
     let metadata = service.metadata.clone();
     let resource_metadata = extract_resource_metadata(&ResourceKind::Service, &metadata, &spec);
-    
+
     HierarchyNode {
         kind: ResourceKind::Service,
         name: service.metadata.name.clone().unwrap_or_default(),
@@ -446,8 +451,9 @@ fn update_httproute_relationships(
         {
             let metadata = httproute.metadata.clone();
             let spec = Some(ResourceSpec::HTTPRouteSpec(httproute.spec.clone()));
-            let resource_metadata = extract_resource_metadata(&ResourceKind::HTTPRoute, &metadata, &spec);
-            
+            let resource_metadata =
+                extract_resource_metadata(&ResourceKind::HTTPRoute, &metadata, &spec);
+
             let mut httproute_node = HierarchyNode {
                 kind: ResourceKind::HTTPRoute,
                 name: httproute_name.as_ref().to_string(),
@@ -547,8 +553,9 @@ async fn build_initial_relationships(ctx: Context) {
     for namespace in namespace_snapshot.iter() {
         let metadata = namespace.metadata.clone();
         let spec = namespace.spec.clone().map(ResourceSpec::NamespaceSpec);
-        let resource_metadata = extract_resource_metadata(&ResourceKind::Namespace, &metadata, &spec);
-        
+        let resource_metadata =
+            extract_resource_metadata(&ResourceKind::Namespace, &metadata, &spec);
+
         let namespace_node = HierarchyNode {
             kind: ResourceKind::Namespace,
             name: namespace.name().unwrap_or_default().to_string(),
@@ -568,8 +575,9 @@ async fn build_initial_relationships(ctx: Context) {
         }) {
             let metadata = httproute.metadata.clone();
             let spec = Some(ResourceSpec::HTTPRouteSpec(httproute.spec.clone()));
-            let resource_metadata = extract_resource_metadata(&ResourceKind::HTTPRoute, &metadata, &spec);
-            
+            let resource_metadata =
+                extract_resource_metadata(&ResourceKind::HTTPRoute, &metadata, &spec);
+
             let httproute_node = HierarchyNode {
                 kind: ResourceKind::HTTPRoute,
                 name: httproute.name().unwrap_or_default().to_string(),
@@ -593,7 +601,7 @@ async fn build_initial_relationships(ctx: Context) {
         let metadata = service.metadata.clone();
         let spec = service.spec.clone().map(ResourceSpec::ServiceSpec);
         let resource_metadata = extract_resource_metadata(&ResourceKind::Service, &metadata, &spec);
-        
+
         let mut service_node = HierarchyNode {
             kind: ResourceKind::Service,
             name: service.name().unwrap_or_default().to_string(),
@@ -873,8 +881,9 @@ where
                     }) {
                         let metadata = namespace.metadata.clone();
                         let spec = namespace.spec.clone().map(ResourceSpec::NamespaceSpec);
-                        let resource_metadata = extract_resource_metadata(&ResourceKind::Namespace, &metadata, &spec);
-                        
+                        let resource_metadata =
+                            extract_resource_metadata(&ResourceKind::Namespace, &metadata, &spec);
+
                         let namespace_node = HierarchyNode {
                             kind: ResourceKind::Namespace,
                             name: namespace_name.as_ref().to_string(),
@@ -1066,5 +1075,376 @@ where
                 error!("error from httproute stream {:?}", err)
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use k8s_openapi::api::core::v1::{PodSpec, PodStatus, ServicePort, ServiceSpec};
+    use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
+    use std::collections::BTreeMap;
+
+    fn create_test_namespace(name: &str) -> HierarchyNode {
+        HierarchyNode {
+            kind: ResourceKind::Namespace,
+            name: name.to_string(),
+            relatives: Vec::new(),
+            metadata: ObjectMeta {
+                name: Some(name.to_string()),
+                namespace: None,
+                ..Default::default()
+            },
+            spec: Some(ResourceSpec::NamespaceSpec(Default::default())),
+            resource_metadata: ResourceMetadata {
+                hostnames: None,
+                selectors: None,
+                ports: None,
+                labels: None,
+                phase: None,
+                backend_refs: None,
+            },
+        }
+    }
+
+    fn create_test_pod(name: &str, namespace: &str, labels: BTreeMap<String, String>) -> Pod {
+        Pod {
+            metadata: ObjectMeta {
+                name: Some(name.to_string()),
+                namespace: Some(namespace.to_string()),
+                labels: Some(labels),
+                ..Default::default()
+            },
+            spec: Some(PodSpec {
+                containers: vec![],
+                ..Default::default()
+            }),
+            status: Some(PodStatus {
+                phase: Some("Running".to_string()),
+                ..Default::default()
+            }),
+        }
+    }
+
+    fn create_test_service(
+        name: &str,
+        namespace: &str,
+        selector: BTreeMap<String, String>,
+    ) -> Service {
+        Service {
+            metadata: ObjectMeta {
+                name: Some(name.to_string()),
+                namespace: Some(namespace.to_string()),
+                ..Default::default()
+            },
+            spec: Some(ServiceSpec {
+                selector: Some(selector),
+                ports: Some(vec![ServicePort {
+                    port: 80,
+                    ..Default::default()
+                }]),
+                ..Default::default()
+            }),
+            status: None,
+        }
+    }
+
+    fn create_test_httproute(name: &str, namespace: &str, _backend_service: &str) -> HTTPRoute {
+        HTTPRoute {
+            metadata: ObjectMeta {
+                name: Some(name.to_string()),
+                namespace: Some(namespace.to_string()),
+                ..Default::default()
+            },
+            spec: HTTPRouteSpec {
+                hostnames: Some(vec!["example.com".to_string()]),
+                ..Default::default()
+            },
+            status: None,
+        }
+    }
+
+    #[test]
+    fn test_selectors_match() {
+        let mut selectors = BTreeMap::new();
+        selectors.insert("app".to_string(), "web".to_string());
+        selectors.insert("version".to_string(), "v1".to_string());
+
+        let mut matching_labels = BTreeMap::new();
+        matching_labels.insert("app".to_string(), "web".to_string());
+        matching_labels.insert("version".to_string(), "v1".to_string());
+        matching_labels.insert("env".to_string(), "prod".to_string());
+
+        let mut non_matching_labels = BTreeMap::new();
+        non_matching_labels.insert("app".to_string(), "api".to_string());
+        non_matching_labels.insert("version".to_string(), "v1".to_string());
+
+        assert!(selectors_match(&selectors, &matching_labels));
+        assert!(!selectors_match(&selectors, &non_matching_labels));
+    }
+
+    #[test]
+    fn test_new_pod_creation() {
+        let mut labels = BTreeMap::new();
+        labels.insert("app".to_string(), "web".to_string());
+
+        let pod = create_test_pod("test-pod", "default", labels.clone());
+        let hierarchy_node = new_pod(&pod);
+
+        assert_eq!(hierarchy_node.kind, ResourceKind::Pod);
+        assert_eq!(hierarchy_node.name, "test-pod");
+        assert_eq!(
+            hierarchy_node.metadata.namespace,
+            Some("default".to_string())
+        );
+        assert_eq!(hierarchy_node.resource_metadata.labels, Some(labels));
+        assert_eq!(
+            hierarchy_node.resource_metadata.phase,
+            Some("Running".to_string())
+        );
+    }
+
+    #[test]
+    fn test_new_service_creation() {
+        let mut selector = BTreeMap::new();
+        selector.insert("app".to_string(), "web".to_string());
+
+        let service = create_test_service("test-service", "default", selector.clone());
+        let hierarchy_node = new_service(&service);
+
+        assert_eq!(hierarchy_node.kind, ResourceKind::Service);
+        assert_eq!(hierarchy_node.name, "test-service");
+        assert_eq!(
+            hierarchy_node.metadata.namespace,
+            Some("default".to_string())
+        );
+        assert_eq!(hierarchy_node.resource_metadata.selectors, Some(selector));
+        assert_eq!(hierarchy_node.resource_metadata.ports, Some(vec![80]));
+    }
+
+    #[test]
+    fn test_remove_pod_node() {
+        let mut namespace = create_test_namespace("default");
+
+        // Add a pod to the namespace
+        let mut labels = BTreeMap::new();
+        labels.insert("app".to_string(), "web".to_string());
+        let pod = create_test_pod("test-pod", "default", labels);
+        let pod_node = new_pod(&pod);
+        namespace.relatives.push(pod_node);
+
+        assert_eq!(namespace.relatives.len(), 1);
+
+        // Remove the pod
+        remove_pod_node(&mut namespace, "test-pod", Some("default"));
+
+        assert_eq!(namespace.relatives.len(), 0);
+    }
+
+    #[test]
+    fn test_remove_service_node() {
+        let mut namespace = create_test_namespace("default");
+
+        // Add a service to the namespace
+        let selector = BTreeMap::new();
+        let service = create_test_service("test-service", "default", selector);
+        let service_node = new_service(&service);
+        namespace.relatives.push(service_node);
+
+        assert_eq!(namespace.relatives.len(), 1);
+
+        // Remove the service
+        remove_service_node(&mut namespace, "test-service", Some("default"));
+
+        assert_eq!(namespace.relatives.len(), 0);
+    }
+
+    #[test]
+    fn test_update_service_relationships_with_matching_pod() {
+        let mut hierarchy = vec![create_test_namespace("default")];
+
+        // Create a service with selector
+        let mut selector = BTreeMap::new();
+        selector.insert("app".to_string(), "web".to_string());
+        let service = create_test_service("web-service", "default", selector.clone());
+
+        // Create a matching pod
+        let pod = create_test_pod("web-pod", "default", selector);
+        let pods = vec![pod];
+
+        update_service_relationships(&mut hierarchy, &service, &pods);
+
+        // Verify service was added to namespace with the pod
+        assert_eq!(hierarchy.len(), 1);
+        assert_eq!(hierarchy[0].relatives.len(), 1);
+        assert_eq!(hierarchy[0].relatives[0].kind, ResourceKind::Service);
+        assert_eq!(hierarchy[0].relatives[0].name, "web-service");
+        assert_eq!(hierarchy[0].relatives[0].relatives.len(), 1);
+        assert_eq!(
+            hierarchy[0].relatives[0].relatives[0].kind,
+            ResourceKind::Pod
+        );
+        assert_eq!(hierarchy[0].relatives[0].relatives[0].name, "web-pod");
+    }
+
+    #[test]
+    fn test_update_httproute_relationships() {
+        let mut hierarchy = vec![create_test_namespace("default")];
+
+        // Create a service
+        let mut selector = BTreeMap::new();
+        selector.insert("app".to_string(), "web".to_string());
+        let service = create_test_service("web-service", "default", selector.clone());
+        let services = vec![service];
+
+        // Create a matching pod
+        let pod = create_test_pod("web-pod", "default", selector);
+        let pods = vec![pod];
+
+        // Create an HTTPRoute
+        let httproute = create_test_httproute("web-route", "default", "web-service");
+
+        update_httproute_relationships(&mut hierarchy, &httproute, &services, &pods);
+
+        // Verify HTTPRoute was added to namespace
+        assert_eq!(hierarchy.len(), 1);
+        assert_eq!(hierarchy[0].relatives.len(), 1);
+
+        let httproute_node = &hierarchy[0].relatives[0];
+        assert_eq!(httproute_node.kind, ResourceKind::HTTPRoute);
+        assert_eq!(httproute_node.name, "web-route");
+        assert_eq!(
+            httproute_node.resource_metadata.hostnames,
+            Some(vec!["example.com".to_string()])
+        );
+    }
+
+    #[test]
+    fn test_service_relationships_without_httproute() {
+        let mut hierarchy = vec![create_test_namespace("default")];
+
+        // Create a service
+        let mut selector = BTreeMap::new();
+        selector.insert("app".to_string(), "api".to_string());
+        let service = create_test_service("api-service", "default", selector.clone());
+
+        // Create a matching pod
+        let pod = create_test_pod("api-pod", "default", selector);
+        let pods = vec![pod];
+
+        update_service_relationships(&mut hierarchy, &service, &pods);
+
+        // Verify service was added directly to namespace (no HTTPRoute)
+        assert_eq!(hierarchy.len(), 1);
+        assert_eq!(hierarchy[0].relatives.len(), 1);
+        assert_eq!(hierarchy[0].relatives[0].kind, ResourceKind::Service);
+        assert_eq!(hierarchy[0].relatives[0].name, "api-service");
+        assert_eq!(hierarchy[0].relatives[0].relatives.len(), 1);
+        assert_eq!(
+            hierarchy[0].relatives[0].relatives[0].kind,
+            ResourceKind::Pod
+        );
+        assert_eq!(hierarchy[0].relatives[0].relatives[0].name, "api-pod");
+    }
+
+    #[test]
+    fn test_extract_resource_metadata_httproute() {
+        let httproute = create_test_httproute("test-route", "default", "test-service");
+        let metadata = httproute.metadata.clone();
+        let spec = Some(ResourceSpec::HTTPRouteSpec(httproute.spec.clone()));
+
+        let resource_metadata =
+            extract_resource_metadata(&ResourceKind::HTTPRoute, &metadata, &spec);
+
+        assert_eq!(
+            resource_metadata.hostnames,
+            Some(vec!["example.com".to_string()])
+        );
+        assert!(resource_metadata.selectors.is_none());
+        assert!(resource_metadata.ports.is_none());
+    }
+
+    #[test]
+    fn test_extract_resource_metadata_service() {
+        let mut selector = BTreeMap::new();
+        selector.insert("app".to_string(), "web".to_string());
+        let service = create_test_service("test-service", "default", selector.clone());
+        let metadata = service.metadata.clone();
+        let spec = Some(ResourceSpec::ServiceSpec(service.spec.clone().unwrap()));
+
+        let resource_metadata = extract_resource_metadata(&ResourceKind::Service, &metadata, &spec);
+
+        assert_eq!(resource_metadata.selectors, Some(selector));
+        assert_eq!(resource_metadata.ports, Some(vec![80]));
+        assert!(resource_metadata.hostnames.is_none());
+        assert!(resource_metadata.backend_refs.is_none());
+    }
+
+    #[test]
+    fn test_hierarchy_state_after_multiple_events() {
+        let mut hierarchy = vec![create_test_namespace("default")];
+
+        // Event 1: Add HTTPRoute
+        let httproute = create_test_httproute("web-route", "default", "web-service");
+        let services = vec![];
+        let pods = vec![];
+        update_httproute_relationships(&mut hierarchy, &httproute, &services, &pods);
+
+        // Verify HTTPRoute added
+        assert_eq!(hierarchy[0].relatives.len(), 1);
+        assert_eq!(hierarchy[0].relatives[0].kind, ResourceKind::HTTPRoute);
+
+        // Event 2: Add Service that matches HTTPRoute
+        let mut selector = BTreeMap::new();
+        selector.insert("app".to_string(), "web".to_string());
+        let service = create_test_service("web-service", "default", selector.clone());
+        update_service_relationships(&mut hierarchy, &service, &pods);
+
+        // Verify service was added directly to namespace (since our simplified HTTPRoute doesn't reference it)
+        assert_eq!(hierarchy[0].relatives.len(), 2); // HTTPRoute and Service
+        let httproute_node = &hierarchy[0].relatives[0];
+        assert_eq!(httproute_node.kind, ResourceKind::HTTPRoute);
+        let service_node = &hierarchy[0].relatives[1];
+        assert_eq!(service_node.kind, ResourceKind::Service);
+
+        // Event 3: Add Pod that matches Service
+        let pod = create_test_pod("web-pod", "default", selector);
+        let pods = vec![pod];
+        update_service_relationships(&mut hierarchy, &service, &pods);
+
+        // Verify pod was added to service
+        let service_node = &hierarchy[0].relatives[1];
+        assert_eq!(service_node.relatives.len(), 1); // Pod under Service
+        assert_eq!(service_node.relatives[0].kind, ResourceKind::Pod);
+        assert_eq!(service_node.relatives[0].name, "web-pod");
+    }
+
+    #[test]
+    fn test_remove_httproute_node() {
+        let mut namespace = create_test_namespace("default");
+
+        // Add an HTTPRoute to the namespace
+        let httproute = create_test_httproute("test-route", "default", "test-service");
+        let metadata = httproute.metadata.clone();
+        let spec = Some(ResourceSpec::HTTPRouteSpec(httproute.spec.clone()));
+        let resource_metadata =
+            extract_resource_metadata(&ResourceKind::HTTPRoute, &metadata, &spec);
+
+        let httproute_node = HierarchyNode {
+            kind: ResourceKind::HTTPRoute,
+            name: "test-route".to_string(),
+            relatives: Vec::new(),
+            metadata,
+            spec,
+            resource_metadata,
+        };
+        namespace.relatives.push(httproute_node);
+
+        assert_eq!(namespace.relatives.len(), 1);
+
+        // Remove the HTTPRoute
+        remove_httproute_node(&mut namespace, "test-route", Some("default"));
+
+        assert_eq!(namespace.relatives.len(), 0);
     }
 }
