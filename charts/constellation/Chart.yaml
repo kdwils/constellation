@@ -1,0 +1,17 @@
+apiVersion: v2
+name: constellation
+description: A self-hosted Kubernetes dashboard that visualizes traffic routing relationships
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - kubernetes
+  - monitoring
+  - dashboard
+  - networking
+  - gateway-api
+home: https://github.com/kdwils/constellation
+sources:
+  - https://github.com/kdwils/constellation
+maintainers:
+  - name: kdwils
