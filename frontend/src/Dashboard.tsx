@@ -55,27 +55,27 @@ export default function Dashboard() {
     }, 0);
 
     return (
-        <div className="min-h-screen bg-gray-50">
-            <header className="bg-white shadow-sm border-b">
-                <div className="max-w-7xl mx-auto px-6 py-4">
+        <div className="min-h-screen bg-white">
+            <header className="bg-white shadow-sm border-b border-gray-200">
+                <div className="max-w-7xl mx-auto px-6 py-6">
                     <div className="flex items-center justify-between">
                         <div>
-                            <h1 className="text-3xl font-bold text-gray-900">
-                                🌟 Constellation Dashboard
+                            <h1 className="text-2xl font-bold text-gray-800">
+                                Constellation
                             </h1>
-                            <p className="text-gray-600 mt-1">
-                                Kubernetes resource relationship visualization
+                            <p className="text-gray-600 mt-1 text-sm">
+                                Kubernetes Resource Relationships
                             </p>
                         </div>
                         <div className="text-right">
-                            <div className="flex space-x-6">
+                            <div className="flex space-x-8">
                                 <div className="text-center">
-                                    <div className="text-2xl font-bold text-blue-600">{totalNamespaces}</div>
-                                    <div className="text-sm text-gray-500">Namespaces</div>
+                                    <div className="text-2xl font-bold text-gray-700">{totalNamespaces}</div>
+                                    <div className="text-xs text-gray-500 uppercase tracking-wide font-medium">Namespaces</div>
                                 </div>
                                 <div className="text-center">
-                                    <div className="text-2xl font-bold text-green-600">{totalResources}</div>
-                                    <div className="text-sm text-gray-500">Total Resources</div>
+                                    <div className="text-2xl font-bold text-gray-700">{totalResources}</div>
+                                    <div className="text-xs text-gray-500 uppercase tracking-wide font-medium">Resources</div>
                                 </div>
                             </div>
                         </div>
@@ -83,16 +83,18 @@ export default function Dashboard() {
                 </div>
             </header>
 
-            <main className="max-w-7xl mx-auto p-6">
-                {data.length > 0 ? (
-                    <ResourceTree nodes={data} />
-                ) : (
-                    <div className="text-center py-12">
-                        <div className="text-gray-400 text-6xl mb-4">📦</div>
-                        <h2 className="text-xl font-semibold text-gray-900 mb-2">No Resources Found</h2>
-                        <p className="text-gray-600">No Kubernetes resources are currently being tracked.</p>
-                    </div>
-                )}
+            <main>
+                <div className="max-w-7xl mx-auto px-6 py-6">
+                    {data.length > 0 ? (
+                        <ResourceTree nodes={data} />
+                    ) : (
+                        <div className="text-center py-12">
+                            <div className="text-gray-400 text-6xl mb-4">📦</div>
+                            <h2 className="text-xl font-semibold text-gray-900 mb-2">No Resources Found</h2>
+                            <p className="text-gray-600">No Kubernetes resources are currently being tracked.</p>
+                        </div>
+                    )}
+                </div>
             </main>
         </div>
     );

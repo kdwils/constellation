@@ -6,4 +6,9 @@ export interface ResourceNode {
     namespace?: string;
     relatives?: ResourceNode[];
     health?: "Healthy" | "Degraded" | "Error" | "Unknown";
+    hostnames?: string[];
+    selectors?: Record<string, string>;
+    ports?: number[];
+    labels?: Record<string, string>;
+    phase?: string;
 }

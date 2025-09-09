@@ -6,7 +6,8 @@
 }
 
 .node-box {
-  border: 1px solid black;
+  border: 1px solid #e5e7eb;
+  background-color: #f9fafb;
 }
 
 .logo {

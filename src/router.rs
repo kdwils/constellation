@@ -1,12 +1,6 @@
 use crate::watcher::{HierarchyNode, State as AppState};
-use axum::{
-    Router,
-    extract::State as AxumState,
-    response::{Html, Json},
-    routing::get,
-};
+use axum::{Router, extract::State as AxumState, response::Json, routing::get};
 use serde::Serialize;
-use tower::ServiceBuilder;
 use tower_http::services::{ServeDir, ServeFile};
 
 #[derive(Serialize)]
@@ -28,7 +22,9 @@ pub async fn new_router(app_state: AppState) -> Router {
 
 async fn state(AxumState(app_state): AxumState<AppState>) -> Json<Vec<HierarchyNode>> {
     let graph = app_state.hierarchy.read().await;
-    Json(graph.clone())
+    let mut sorted_graph = graph.clone();
+    sorted_graph.sort_by(|a, b| a.name.cmp(&b.name));
+    Json(sorted_graph)
 }
 
 async fn healthz() -> Json<HealthCheck> {

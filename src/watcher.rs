@@ -1,10 +1,8 @@
-use chrono::{DateTime, Utc};
-use futures::{Stream, StreamExt, TryStreamExt};
+use futures::{Stream, StreamExt};
 use k8s_openapi::api::core::v1;
 use kube::{
     Client, ResourceExt,
     api::Api,
-    error,
     runtime::{
         WatchStreamExt,
         reflector::{self, Lookup, Store},
@@ -15,7 +13,6 @@ use kube::{
 use std::{collections::BTreeMap, collections::HashSet, sync::Arc};
 use tokio::sync::RwLock;
 
-use futures::FutureExt;
 use gateway_api::httproutes::{HTTPRoute, HTTPRouteSpec};
 use k8s_openapi::api::core::v1::{Namespace, Pod, Service};
 use kube::api::ObjectMeta;
@@ -51,6 +48,20 @@ pub enum ResourceSpec {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct ResourceMetadata {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hostnames: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selectors: Option<BTreeMap<String, String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ports: Option<Vec<u32>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub labels: Option<BTreeMap<String, String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub phase: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct HierarchyNode {
     pub kind: ResourceKind,
     pub name: String,
@@ -59,6 +70,8 @@ pub struct HierarchyNode {
     pub metadata: ObjectMeta,
     #[serde(skip)]
     pub spec: Option<ResourceSpec>,
+    #[serde(flatten)]
+    pub resource_metadata: ResourceMetadata,
 }
 
 #[derive(Clone)]
@@ -79,7 +92,7 @@ pub struct Context {
     state: State,
     pod_store: Store<v1::Pod>,
     service_store: Store<v1::Service>,
-    namespace_store: Store<v1::Namespace>,
+    namespace_store: Store<Namespace>,
     httproute_store: Store<HTTPRoute>,
 }
 
@@ -97,8 +110,8 @@ pub async fn run(state: State) {
         watcher::watcher(pod_api, config.clone()).default_backoff(),
     );
 
-    let namespace_api: Api<v1::Namespace> = Api::all(client.clone());
-    let (namespace_store, namespace_writer) = reflector::store::<v1::Namespace>();
+    let namespace_api: Api<Namespace> = Api::all(client.clone());
+    let (namespace_store, namespace_writer) = reflector::store::<Namespace>();
     let namespace_rf = reflector::reflector(
         namespace_writer,
         watcher::watcher(namespace_api, config.clone()).default_backoff(),
@@ -144,54 +157,310 @@ pub async fn run(state: State) {
     build_initial_relationships(ctx.clone()).await;
 }
 
+fn extract_resource_metadata(
+    kind: &ResourceKind,
+    metadata: &ObjectMeta,
+    spec: &Option<ResourceSpec>,
+) -> ResourceMetadata {
+    match kind {
+        ResourceKind::HTTPRoute => {
+            let hostnames = match spec {
+                Some(ResourceSpec::HTTPRouteSpec(spec)) => {
+                    let mut hosts = Vec::new();
+                    if let Some(hostname_list) = &spec.hostnames {
+                        for hostname in hostname_list {
+                            hosts.push(hostname.clone());
+                        }
+                    }
+                    if hosts.is_empty() { None } else { Some(hosts) }
+                }
+                _ => None,
+            };
+            ResourceMetadata {
+                hostnames,
+                selectors: None,
+                ports: None,
+                labels: None,
+                phase: None,
+            }
+        }
+        ResourceKind::Service => {
+            let (selectors, ports) = match spec {
+                Some(ResourceSpec::ServiceSpec(spec)) => {
+                    let selectors = spec.selector.clone();
+                    let ports = spec.ports.as_ref().map(|port_list| {
+                        port_list
+                            .iter()
+                            .map(|p| p.port as u32)
+                            .collect::<Vec<_>>()
+                    });
+                    (selectors, ports)
+                }
+                _ => (None, None),
+            };
+            ResourceMetadata {
+                hostnames: None,
+                selectors,
+                ports,
+                labels: None,
+                phase: None,
+            }
+        }
+        ResourceKind::Pod => {
+            let labels = metadata.labels.clone();
+            let ports = match spec {
+                Some(ResourceSpec::PodSpec(spec)) => {
+                    let mut port_list = Vec::new();
+                    for container in &spec.containers {
+                        if let Some(container_ports) = &container.ports {
+                            for port in container_ports {
+                                port_list.push(port.container_port as u32);
+                            }
+                        }
+                    }
+                    if port_list.is_empty() { None } else { Some(port_list) }
+                }
+                _ => None,
+            };
+            ResourceMetadata {
+                hostnames: None,
+                selectors: None,
+                ports,
+                labels,
+                phase: None,
+            }
+        }
+        ResourceKind::Namespace => ResourceMetadata {
+            hostnames: None,
+            selectors: None,
+            ports: None,
+            labels: None,
+            phase: None,
+        },
+    }
+}
+
 fn new_pod(pod: &Pod) -> HierarchyNode {
+    let spec = pod.spec.clone().map(ResourceSpec::PodSpec);
+    let metadata = pod.metadata.clone();
+    let resource_metadata = extract_resource_metadata(&ResourceKind::Pod, &metadata, &spec);
+    
     HierarchyNode {
         kind: ResourceKind::Pod,
         name: pod.metadata.name.clone().unwrap_or_default(),
         relatives: Vec::new(),
-        metadata: pod.metadata.clone(),
-        spec: pod.spec.clone().map(ResourceSpec::PodSpec),
+        metadata,
+        spec,
+        resource_metadata,
     }
 }
 
 fn new_service(service: &Service) -> HierarchyNode {
+    let spec = service.spec.clone().map(ResourceSpec::ServiceSpec);
+    let metadata = service.metadata.clone();
+    let resource_metadata = extract_resource_metadata(&ResourceKind::Service, &metadata, &spec);
+    
     HierarchyNode {
         kind: ResourceKind::Service,
         name: service.metadata.name.clone().unwrap_or_default(),
         relatives: Vec::new(),
-        metadata: service.metadata.clone(),
-        spec: service.spec.clone().map(ResourceSpec::ServiceSpec),
+        metadata,
+        spec,
+        resource_metadata,
     }
 }
 
-fn add_service(
+fn remove_pod_node(node: &mut HierarchyNode, pod_name: &str, pod_ns: Option<&str>) {
+    node.relatives.retain(|p| {
+        !(p.kind == ResourceKind::Pod
+            && p.name == pod_name
+            && p.metadata.namespace.as_deref() == pod_ns)
+    });
+
+    for child in node.relatives.iter_mut() {
+        remove_pod_node(child, pod_name, pod_ns);
+    }
+}
+
+fn remove_service_node(node: &mut HierarchyNode, service_name: &str, service_ns: Option<&str>) {
+    node.relatives.retain(|s| {
+        !(s.kind == ResourceKind::Service
+            && s.name == service_name
+            && s.metadata.namespace.as_deref() == service_ns)
+    });
+
+    for child in node.relatives.iter_mut() {
+        remove_service_node(child, service_name, service_ns);
+    }
+}
+
+fn remove_httproute_node(
     node: &mut HierarchyNode,
-    service_node: &HierarchyNode,
-    service_name: &str,
-    service_ns: Option<&str>,
-    pods: &[v1::Pod],
+    httproute_name: &str,
+    httproute_ns: Option<&str>,
 ) {
-    match node.kind {
-        ResourceKind::HTTPRoute => {
-            if let Some(ResourceSpec::HTTPRouteSpec(spec)) = &node.spec {
-                let referenced = spec
-                    .rules
-                    .iter()
-                    .flatten()
-                    .flat_map(|rule| &rule.backend_refs)
-                    .flatten()
-                    .any(|r| {
-                        r.kind.as_deref() == Some(&ResourceKind::Service.to_string())
-                            && r.name == service_name
-                    });
+    node.relatives.retain(|h| {
+        !(h.kind == ResourceKind::HTTPRoute
+            && h.name == httproute_name
+            && h.metadata.namespace.as_deref() == httproute_ns)
+    });
 
-                if referenced {
-                    if !node.relatives.iter().any(|s| s.name == service_name) {
-                        let mut new_service = service_node.clone();
+    for child in node.relatives.iter_mut() {
+        remove_httproute_node(child, httproute_name, httproute_ns);
+    }
+}
 
-                        // Attach matching pods
+fn update_service_relationships(
+    hierarchy: &mut Vec<HierarchyNode>,
+    service: &Service,
+    pods: &[Pod],
+) {
+    let service_name = service.name().unwrap_or_default();
+    let service_ns = service.metadata.namespace.as_deref();
+    let service_node = new_service(service);
+
+    // Remove existing service if present
+    for node in hierarchy.iter_mut() {
+        remove_service_node(node, service_name.as_ref(), service_ns);
+    }
+
+    // Add service with current pod relationships
+    for namespace_node in hierarchy.iter_mut() {
+        if namespace_node.kind == ResourceKind::Namespace
+            && namespace_node.metadata.name.as_deref() == service_ns
+        {
+            // Check if service should be added to any HTTPRoutes in this namespace
+            let mut service_added_to_httproute = false;
+
+            for httproute in namespace_node.relatives.iter_mut() {
+                if httproute.kind == ResourceKind::HTTPRoute {
+                    if let Some(ResourceSpec::HTTPRouteSpec(spec)) = &httproute.spec {
+                        let referenced = spec
+                            .rules
+                            .iter()
+                            .flatten()
+                            .flat_map(|rule| &rule.backend_refs)
+                            .flatten()
+                            .any(|r| {
+                                r.kind.as_deref() == Some(&ResourceKind::Service.to_string())
+                                    && r.name == service_name.as_ref()
+                            });
+
+                        if referenced {
+                            let mut new_service = service_node.clone();
+
+                            // Add matching pods to the service
+                            if let Some(ResourceSpec::ServiceSpec(service_spec)) =
+                                &service_node.spec
+                            {
+                                new_service.relatives.extend(
+                                    pods.iter()
+                                        .filter(|pod| {
+                                            let pod_ns = pod.metadata.namespace.as_deref();
+                                            pod_ns == service_ns
+                                                && selectors_match(
+                                                    &service_spec
+                                                        .selector
+                                                        .clone()
+                                                        .unwrap_or_default(),
+                                                    pod.labels(),
+                                                )
+                                        })
+                                        .map(new_pod),
+                                );
+                            }
+
+                            httproute.relatives.push(new_service);
+                            service_added_to_httproute = true;
+                        }
+                    }
+                }
+            }
+
+            // If service wasn't added to any HTTPRoute, add it directly to namespace
+            if !service_added_to_httproute {
+                let mut new_service = service_node.clone();
+
+                // Add matching pods to the service
+                if let Some(ResourceSpec::ServiceSpec(service_spec)) = &service_node.spec {
+                    new_service.relatives.extend(
+                        pods.iter()
+                            .filter(|pod| {
+                                let pod_ns = pod.metadata.namespace.as_deref();
+                                pod_ns == service_ns
+                                    && selectors_match(
+                                        &service_spec.selector.clone().unwrap_or_default(),
+                                        pod.labels(),
+                                    )
+                            })
+                            .map(new_pod),
+                    );
+                }
+
+                namespace_node.relatives.push(new_service);
+            }
+            break;
+        }
+    }
+}
+
+fn update_httproute_relationships(
+    hierarchy: &mut Vec<HierarchyNode>,
+    httproute: &HTTPRoute,
+    services: &[Service],
+    pods: &[Pod],
+) {
+    let httproute_name = httproute.name().unwrap_or_default();
+    let httproute_ns = httproute.metadata.namespace.as_deref();
+
+    for node in hierarchy.iter_mut() {
+        remove_httproute_node(node, httproute_name.as_ref(), httproute_ns);
+    }
+
+    for namespace_node in hierarchy.iter_mut() {
+        if namespace_node.kind == ResourceKind::Namespace
+            && namespace_node.metadata.name.as_deref() == httproute_ns
+        {
+            let metadata = httproute.metadata.clone();
+            let spec = Some(ResourceSpec::HTTPRouteSpec(httproute.spec.clone()));
+            let resource_metadata = extract_resource_metadata(&ResourceKind::HTTPRoute, &metadata, &spec);
+            
+            let mut httproute_node = HierarchyNode {
+                kind: ResourceKind::HTTPRoute,
+                name: httproute_name.as_ref().to_string(),
+                relatives: Vec::new(),
+                metadata,
+                spec,
+                resource_metadata,
+            };
+
+            // Add referenced services to the HTTPRoute
+            if let Some(ResourceSpec::HTTPRouteSpec(spec)) = &httproute_node.spec {
+                for service in services.iter() {
+                    let service_name = service.name().unwrap_or_default();
+                    let service_ns = service.metadata.namespace.as_deref();
+
+                    if service_ns != httproute_ns {
+                        continue;
+                    }
+
+                    let referenced = spec
+                        .rules
+                        .iter()
+                        .flatten()
+                        .flat_map(|rule| &rule.backend_refs)
+                        .flatten()
+                        .any(|r| {
+                            r.kind.as_deref() == Some(&ResourceKind::Service.to_string())
+                                && r.name == service_name.as_ref()
+                        });
+
+                    if referenced {
+                        let mut service_node = new_service(service);
+
+                        // Add matching pods to the service
                         if let Some(ResourceSpec::ServiceSpec(service_spec)) = &service_node.spec {
-                            new_service.relatives.extend(
+                            service_node.relatives.extend(
                                 pods.iter()
                                     .filter(|pod| {
                                         let pod_ns = pod.metadata.namespace.as_deref();
@@ -205,54 +474,14 @@ fn add_service(
                             );
                         }
 
-                        node.relatives.push(new_service);
+                        httproute_node.relatives.push(service_node);
                     }
                 }
             }
+
+            namespace_node.relatives.push(httproute_node);
+            break;
         }
-        ResourceKind::Namespace => {
-            if !node
-                .relatives
-                .iter()
-                .any(|r| r.name == service_name && r.kind == ResourceKind::Service)
-            {
-                let mut new_service = service_node.clone();
-
-                // Attach matching pods
-                if let Some(ResourceSpec::ServiceSpec(service_spec)) = &service_node.spec {
-                    new_service.relatives.extend(
-                        pods.iter()
-                            .filter(|pod| pod.metadata.namespace.as_deref() == service_ns)
-                            .filter(|pod| {
-                                selectors_match(
-                                    &service_spec.selector.clone().unwrap_or_default(),
-                                    pod.labels(),
-                                )
-                            })
-                            .map(new_pod),
-                    );
-                }
-
-                node.relatives.push(new_service);
-            }
-        }
-        _ => {}
-    }
-
-    for child in node.relatives.iter_mut() {
-        add_service(child, service_node, service_name, service_ns, pods);
-    }
-}
-
-fn remove_pod_node(node: &mut HierarchyNode, pod_name: &str, pod_ns: Option<&str>) {
-    node.relatives.retain(|p| {
-        !(p.kind == ResourceKind::Pod
-            && p.name == pod_name
-            && p.metadata.namespace.as_deref() == pod_ns)
-    });
-
-    for child in node.relatives.iter_mut() {
-        remove_pod_node(child, pod_name, pod_ns);
     }
 }
 
@@ -293,12 +522,17 @@ async fn build_initial_relationships(ctx: Context) {
     let mut assigned_nodes: HashSet<String> = HashSet::new();
 
     for namespace in namespace_snapshot.iter() {
+        let metadata = namespace.metadata.clone();
+        let spec = namespace.spec.clone().map(ResourceSpec::NamespaceSpec);
+        let resource_metadata = extract_resource_metadata(&ResourceKind::Namespace, &metadata, &spec);
+        
         let namespace_node = HierarchyNode {
             kind: ResourceKind::Namespace,
             name: namespace.name().unwrap_or_default().to_string(),
             relatives: Vec::new(),
-            metadata: namespace.metadata.clone(),
-            spec: namespace.spec.clone().map(ResourceSpec::NamespaceSpec),
+            metadata,
+            spec,
+            resource_metadata,
         };
         info!("adding namespace {:?}", namespace_node.name);
         hierarchy.push(namespace_node);
@@ -309,12 +543,17 @@ async fn build_initial_relationships(ctx: Context) {
             node.kind == ResourceKind::Namespace
                 && httproute.metadata.namespace == node.metadata.name
         }) {
+            let metadata = httproute.metadata.clone();
+            let spec = Some(ResourceSpec::HTTPRouteSpec(httproute.spec.clone()));
+            let resource_metadata = extract_resource_metadata(&ResourceKind::HTTPRoute, &metadata, &spec);
+            
             let httproute_node = HierarchyNode {
                 kind: ResourceKind::HTTPRoute,
                 name: httproute.name().unwrap_or_default().to_string(),
                 relatives: Vec::new(),
-                metadata: httproute.metadata.clone(),
-                spec: Some(ResourceSpec::HTTPRouteSpec(httproute.spec.clone())),
+                metadata,
+                spec,
+                resource_metadata,
             };
 
             info!(
@@ -328,12 +567,17 @@ async fn build_initial_relationships(ctx: Context) {
     for service in services_snapshot.iter() {
         let service_namespace = service.metadata.namespace.clone().unwrap_or_default();
         let service_spec = service.spec.clone().unwrap_or_default();
+        let metadata = service.metadata.clone();
+        let spec = service.spec.clone().map(ResourceSpec::ServiceSpec);
+        let resource_metadata = extract_resource_metadata(&ResourceKind::Service, &metadata, &spec);
+        
         let mut service_node = HierarchyNode {
             kind: ResourceKind::Service,
             name: service.name().unwrap_or_default().to_string(),
             relatives: Vec::new(),
-            metadata: service.metadata.clone(),
-            spec: service.spec.clone().map(ResourceSpec::ServiceSpec),
+            metadata,
+            spec,
+            resource_metadata,
         };
 
         for pod in pods_snapshot.iter() {
@@ -363,6 +607,7 @@ async fn build_initial_relationships(ctx: Context) {
             }
         }
 
+        let mut service_added_to_httproute = false;
         if let Some(namespace) = hierarchy.iter_mut().find(|node| {
             node.kind == ResourceKind::Namespace && node.metadata.name == service.metadata.namespace
         }) {
@@ -389,14 +634,32 @@ async fn build_initial_relationships(ctx: Context) {
                                         service_node.name, node.name
                                     );
                                     node.relatives.push(service_node.clone());
-                                    assigned_nodes.insert(
-                                        service.name().unwrap_or_default().as_ref().to_string(),
-                                    );
+                                    service_added_to_httproute = true;
                                 }
                             }
                         });
                 }
             });
+        }
+
+        // If service was added to an HTTPRoute, mark it as assigned
+        if service_added_to_httproute {
+            assigned_nodes.insert(service.name().unwrap_or_default().as_ref().to_string());
+        }
+
+        // If service was not added to any HTTPRoute, add it directly to namespace
+        if !service_added_to_httproute {
+            if let Some(namespace_node) = hierarchy.iter_mut().find(|node| {
+                node.kind == ResourceKind::Namespace
+                    && node.metadata.name == service.metadata.namespace
+            }) {
+                info!(
+                    "adding service {:?} to namespace {:?}",
+                    service_node.name, namespace_node.name
+                );
+                namespace_node.relatives.push(service_node);
+                assigned_nodes.insert(service.name().unwrap_or_default().as_ref().to_string());
+            }
         }
     }
 
@@ -449,9 +712,9 @@ pub fn selectors_match(
     selectors: &BTreeMap<String, String>,
     labels: &BTreeMap<String, String>,
 ) -> bool {
-    selectors.iter().all(|(key, value)| {
-        labels.get(key).map_or(false, |v| v == value)
-    })
+    selectors
+        .iter()
+        .all(|(key, value)| labels.get(key).map_or(false, |v| v == value))
 }
 
 pub async fn pod_watcher<S>(ctx: Context, mut pod_stream: S)
@@ -525,8 +788,35 @@ where
     while let Some(event) = service_stream.next().await {
         match event {
             Ok(ev) => match ev {
-                watcher::Event::Apply(service) => {}
-                watcher::Event::Delete(service) => {}
+                watcher::Event::Apply(service) => {
+                    info!(
+                        "service applied: {}",
+                        service.metadata.name.clone().unwrap_or_default()
+                    );
+
+                    let pods_snapshot: Vec<Pod> = ctx
+                        .pod_store
+                        .state()
+                        .iter()
+                        .map(|pod| pod.as_ref().clone())
+                        .collect();
+                    let mut hierarchy = ctx.state.hierarchy.write().await;
+                    update_service_relationships(&mut hierarchy, &service, &pods_snapshot);
+                }
+                watcher::Event::Delete(service) => {
+                    info!(
+                        "service deleted: {}",
+                        service.metadata.name.clone().unwrap_or_default()
+                    );
+
+                    let service_name = service.metadata.name.as_deref().unwrap_or_default();
+                    let service_ns = service.metadata.namespace.as_deref();
+
+                    let mut hierarchy = ctx.state.hierarchy.write().await;
+                    for node in hierarchy.iter_mut() {
+                        remove_service_node(node, service_name, service_ns);
+                    }
+                }
                 _ => {}
             },
             Err(err) => {
@@ -538,13 +828,140 @@ where
 
 pub async fn namespace_watcher<S>(ctx: Context, mut namespace_stream: S)
 where
-    S: Stream<Item = Result<watcher::Event<v1::Namespace>, WatcherError>> + Unpin,
+    S: Stream<Item = Result<watcher::Event<Namespace>, WatcherError>> + Unpin,
 {
     info!("namespace watcher started, waiting for events...");
 
     while let Some(event) = namespace_stream.next().await {
         match event {
-            Ok(ev) => {}
+            Ok(ev) => match ev {
+                watcher::Event::Apply(namespace) => {
+                    info!(
+                        "namespace applied: {}",
+                        namespace.metadata.name.clone().unwrap_or_default()
+                    );
+
+                    let namespace_name = namespace.name().unwrap_or_default();
+                    let mut hierarchy = ctx.state.hierarchy.write().await;
+
+                    // Check if namespace already exists
+                    if !hierarchy.iter().any(|node| {
+                        node.kind == ResourceKind::Namespace && node.name == namespace_name.as_ref()
+                    }) {
+                        let metadata = namespace.metadata.clone();
+                        let spec = namespace.spec.clone().map(ResourceSpec::NamespaceSpec);
+                        let resource_metadata = extract_resource_metadata(&ResourceKind::Namespace, &metadata, &spec);
+                        
+                        let namespace_node = HierarchyNode {
+                            kind: ResourceKind::Namespace,
+                            name: namespace_name.as_ref().to_string(),
+                            relatives: Vec::new(),
+                            metadata,
+                            spec,
+                            resource_metadata,
+                        };
+                        hierarchy.push(namespace_node);
+
+                        // Add existing resources to the new namespace
+                        let services_snapshot: Vec<Service> = ctx
+                            .service_store
+                            .state()
+                            .iter()
+                            .map(|service| service.as_ref().clone())
+                            .collect();
+                        let httproutes_snapshot: Vec<HTTPRoute> = ctx
+                            .httproute_store
+                            .state()
+                            .iter()
+                            .map(|route| route.as_ref().clone())
+                            .collect();
+                        let pods_snapshot: Vec<Pod> = ctx
+                            .pod_store
+                            .state()
+                            .iter()
+                            .map(|pod| pod.as_ref().clone())
+                            .collect();
+
+                        // Add HTTPRoutes to this namespace
+                        for httproute in httproutes_snapshot.iter() {
+                            if httproute.metadata.namespace.as_deref()
+                                == Some(namespace_name.as_ref())
+                            {
+                                update_httproute_relationships(
+                                    &mut hierarchy,
+                                    httproute,
+                                    &services_snapshot,
+                                    &pods_snapshot,
+                                );
+                            }
+                        }
+
+                        // Add services to this namespace (those not already in HTTPRoutes)
+                        for service in services_snapshot.iter() {
+                            if service.metadata.namespace.as_deref()
+                                == Some(namespace_name.as_ref())
+                            {
+                                update_service_relationships(
+                                    &mut hierarchy,
+                                    service,
+                                    &pods_snapshot,
+                                );
+                            }
+                        }
+
+                        // Add orphaned pods to this namespace
+                        for pod in pods_snapshot.iter() {
+                            if pod.metadata.namespace.as_deref() == Some(namespace_name.as_ref()) {
+                                // Check if pod is already assigned to a service
+                                let mut pod_assigned = false;
+                                if let Some(ns_node) = hierarchy.iter().find(|node| {
+                                    node.kind == ResourceKind::Namespace
+                                        && node.name == namespace_name.as_ref()
+                                }) {
+                                    fn check_pod_in_hierarchy(
+                                        node: &HierarchyNode,
+                                        pod_name: &str,
+                                    ) -> bool {
+                                        if node.kind == ResourceKind::Pod && node.name == pod_name {
+                                            return true;
+                                        }
+                                        node.relatives
+                                            .iter()
+                                            .any(|child| check_pod_in_hierarchy(child, pod_name))
+                                    }
+                                    pod_assigned = check_pod_in_hierarchy(
+                                        ns_node,
+                                        pod.name().unwrap_or_default().as_ref(),
+                                    );
+                                }
+
+                                if !pod_assigned {
+                                    if let Some(ns_node) = hierarchy.iter_mut().find(|node| {
+                                        node.kind == ResourceKind::Namespace
+                                            && node.name == namespace_name.as_ref()
+                                    }) {
+                                        ns_node.relatives.push(new_pod(pod));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                watcher::Event::Delete(namespace) => {
+                    info!(
+                        "namespace deleted: {}",
+                        namespace.metadata.name.clone().unwrap_or_default()
+                    );
+
+                    let namespace_name = namespace.name().unwrap_or_default();
+                    let mut hierarchy = ctx.state.hierarchy.write().await;
+                    hierarchy.retain(|node| {
+                        !(node.kind == ResourceKind::Namespace
+                            && node.name == namespace_name.as_ref())
+                    });
+                }
+                _ => {}
+            },
             Err(err) => {
                 error!("error from namespace stream {:?}", err)
             }
@@ -560,7 +977,68 @@ where
 
     while let Some(event) = httroute_stream.next().await {
         match event {
-            Ok(ev) => {}
+            Ok(ev) => match ev {
+                watcher::Event::Apply(httproute) => {
+                    info!(
+                        "httproute applied: {}",
+                        httproute.metadata.name.clone().unwrap_or_default()
+                    );
+
+                    let services_snapshot: Vec<Service> = ctx
+                        .service_store
+                        .state()
+                        .iter()
+                        .map(|service| service.as_ref().clone())
+                        .collect();
+                    let pods_snapshot: Vec<Pod> = ctx
+                        .pod_store
+                        .state()
+                        .iter()
+                        .map(|pod| pod.as_ref().clone())
+                        .collect();
+                    let mut hierarchy = ctx.state.hierarchy.write().await;
+                    update_httproute_relationships(
+                        &mut hierarchy,
+                        &httproute,
+                        &services_snapshot,
+                        &pods_snapshot,
+                    );
+                }
+                watcher::Event::Delete(httproute) => {
+                    info!(
+                        "httproute deleted: {}",
+                        httproute.metadata.name.clone().unwrap_or_default()
+                    );
+
+                    let httproute_name = httproute.metadata.name.as_deref().unwrap_or_default();
+                    let httproute_ns = httproute.metadata.namespace.as_deref();
+
+                    let mut hierarchy = ctx.state.hierarchy.write().await;
+                    for node in hierarchy.iter_mut() {
+                        remove_httproute_node(node, httproute_name, httproute_ns);
+                    }
+
+                    let services_snapshot: Vec<Service> = ctx
+                        .service_store
+                        .state()
+                        .iter()
+                        .map(|service| service.as_ref().clone())
+                        .collect();
+                    let pods_snapshot: Vec<Pod> = ctx
+                        .pod_store
+                        .state()
+                        .iter()
+                        .map(|pod| pod.as_ref().clone())
+                        .collect();
+
+                    for service in services_snapshot.iter() {
+                        if service.metadata.namespace.as_deref() == httproute_ns {
+                            update_service_relationships(&mut hierarchy, service, &pods_snapshot);
+                        }
+                    }
+                }
+                _ => {}
+            },
             Err(err) => {
                 error!("error from httproute stream {:?}", err)
             }

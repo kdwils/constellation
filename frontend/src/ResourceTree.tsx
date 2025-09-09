@@ -12,7 +12,7 @@ interface ResourceTreeProps {
 
 export function ResourceTree({ nodes }: ResourceTreeProps) {
     return (
-        <div className="space-y-4">
+        <div className="space-y-4 w-full flex flex-col min-w-0">
             {nodes.map((node) => (
                 <ResourceNodeItem key={node.kind + node.name} node={node} />
             ))}
@@ -23,31 +23,31 @@ export function ResourceTree({ nodes }: ResourceTreeProps) {
 interface ResourceNodeItemProps {
     node: ResourceNode;
     level?: number;
+    serviceSelectors?: Record<string, string>;
 }
 
-function ResourceNodeItem({ node, level = 0 }: ResourceNodeItemProps) {
+function ResourceNodeItem({ node, level = 0, serviceSelectors }: ResourceNodeItemProps) {
     const [isCollapsed, setIsCollapsed] = useState(true);
 
     if (node.kind === "Namespace") {
         const resourceCount = countTotalResources(node);
 
         return (
-            <div className="border rounded-lg shadow-lg bg-white overflow-hidden">
+            <div className="border border-gray-200 rounded-lg shadow-sm bg-white overflow-hidden block w-full">
                 <NamespaceHeader
                     name={node.name}
                     resourceCount={resourceCount}
                     isCollapsed={isCollapsed}
                     onToggle={() => setIsCollapsed(!isCollapsed)}
                 />
-                {!isCollapsed && (
-                    <div className="p-4 space-y-3">
+                <div className={`transition-all duration-300 ease-in-out overflow-hidden ${
+                    isCollapsed ? 'max-h-0 opacity-0' : 'max-h-[600px] opacity-100'
+                }`}>
+                    <div className="p-4 space-y-6 overflow-y-auto max-h-[550px]">
                         {node.relatives && node.relatives.length > 0 ? (
-                            node.relatives.map((childNode, index) => (
-                                <div key={childNode.name} className="space-y-2">
-                                    <ResourceNodeItem node={childNode} level={level + 1} />
-                                    {index < node.relatives!.length - 1 && (
-                                        <div className="border-b border-gray-100"></div>
-                                    )}
+                            node.relatives.map((childNode) => (
+                                <div key={childNode.name} className="border border-gray-200 rounded-lg p-4 bg-gray-50/50 space-y-2">
+                                    <ResourceNodeItem node={childNode} level={level + 1} serviceSelectors={serviceSelectors} />
                                 </div>
                             ))
                         ) : (
@@ -56,7 +56,7 @@ function ResourceNodeItem({ node, level = 0 }: ResourceNodeItemProps) {
                             </div>
                         )}
                     </div>
-                )}
+                </div>
             </div>
         );
     }
@@ -66,7 +66,7 @@ function ResourceNodeItem({ node, level = 0 }: ResourceNodeItemProps) {
             <div className="space-y-2">
                 <IngressBox name={node.name} />
                 {node.relatives && node.relatives.map((childNode) => (
-                    <ResourceNodeItem key={childNode.name} node={childNode} level={level + 1} />
+                    <ResourceNodeItem key={childNode.name} node={childNode} level={level + 1} serviceSelectors={serviceSelectors} />
                 ))}
             </div>
         );
@@ -75,9 +75,9 @@ function ResourceNodeItem({ node, level = 0 }: ResourceNodeItemProps) {
     if (node.kind === "HTTPRoute") {
         return (
             <div className="space-y-2">
-                <HttpRouteBox name={node.name} />
+                <HttpRouteBox name={node.name} hostnames={node.hostnames} />
                 {node.relatives && node.relatives.map((childNode) => (
-                    <ResourceNodeItem key={childNode.name} node={childNode} level={level + 1} />
+                    <ResourceNodeItem key={childNode.name} node={childNode} level={level + 1} serviceSelectors={serviceSelectors} />
                 ))}
             </div>
         );
@@ -86,9 +86,9 @@ function ResourceNodeItem({ node, level = 0 }: ResourceNodeItemProps) {
     if (node.kind === "Service") {
         return (
             <div className="space-y-2">
-                <ServiceBox name={node.name} />
+                <ServiceBox name={node.name} selectors={node.selectors} ports={node.ports} />
                 {node.relatives && node.relatives.map((childNode) => (
-                    <ResourceNodeItem key={childNode.name} node={childNode} level={level + 1} />
+                    <ResourceNodeItem key={childNode.name} node={childNode} level={level + 1} serviceSelectors={node.selectors} />
                 ))}
             </div>
         );
@@ -97,9 +97,9 @@ function ResourceNodeItem({ node, level = 0 }: ResourceNodeItemProps) {
     if (node.kind === "Pod") {
         return (
             <div className="space-y-2">
-                <PodBox name={node.name} />
+                <PodBox name={node.name} labels={node.labels} ports={node.ports} serviceSelectors={serviceSelectors} />
                 {node.relatives && node.relatives.map((childNode) => (
-                    <ResourceNodeItem key={childNode.name} node={childNode} level={level + 1} />
+                    <ResourceNodeItem key={childNode.name} node={childNode} level={level + 1} serviceSelectors={serviceSelectors} />
                 ))}
             </div>
         );
