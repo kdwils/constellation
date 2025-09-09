@@ -8,7 +8,6 @@ RUN npm run build
 FROM rust:1.80-alpine AS backend-builder
 WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
-RUN cargo fetch
 COPY . .
 RUN cargo build --release
 
