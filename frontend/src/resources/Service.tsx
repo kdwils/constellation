@@ -1,3 +1,5 @@
+import { LabelDisplay } from "../components/LabelDisplay";
+
 interface ServiceBoxProps {
     name: string;
     selectors?: Record<string, string>;
@@ -20,15 +22,7 @@ export function ServiceBox({ name, selectors, ports }: ServiceBoxProps) {
                         <div className="flex items-start space-x-1">
                             <span className="text-slate-500 mt-0.5">🎯</span>
                             <div className="flex-1 text-slate-600 font-medium">
-                                <div className="flex flex-wrap gap-x-2 gap-y-1">
-                                    {Object.entries(selectors).map(([key, value]) => (
-                                        <span key={key} className="break-words">
-                                            <span className="text-slate-500">{key}</span>
-                                            <span className="text-slate-400">=</span>
-                                            <span className="text-slate-700">{value}</span>
-                                        </span>
-                                    ))}
-                                </div>
+                                <LabelDisplay labels={selectors} alwaysHighlight={true} />
                             </div>
                         </div>
                     )}

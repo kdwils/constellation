@@ -1,3 +1,5 @@
+import { LabelDisplay } from "../components/LabelDisplay";
+
 interface PodBoxProps {
     name: string;
     labels?: Record<string, string>;
@@ -7,10 +9,6 @@ interface PodBoxProps {
 
 export function PodBox({ name, labels, ports, serviceSelectors }: PodBoxProps) {
     const hasMetadata = (labels && Object.keys(labels).length > 0) || (ports && ports.length > 0);
-    
-    const isLabelSelectedByService = (key: string, value: string): boolean => {
-        return serviceSelectors ? serviceSelectors[key] === value : false;
-    };
 
     return (
         <div className="ml-12 p-3 bg-white border-l-4 border-cyan-500 rounded-r-md shadow-sm">
@@ -25,21 +23,7 @@ export function PodBox({ name, labels, ports, serviceSelectors }: PodBoxProps) {
                         <div className="flex items-start space-x-1">
                             <span className="text-slate-500 mt-0.5">🏷️</span>
                             <div className="flex-1 text-slate-600 font-medium">
-                                <div className="flex flex-wrap gap-x-2 gap-y-1">
-                                    {Object.entries(labels).map(([key, value]) => {
-                                        const isSelected = isLabelSelectedByService(key, value);
-                                        return (
-                                            <span 
-                                                key={key} 
-                                                className={`break-words ${isSelected ? 'px-2 py-0.5 bg-amber-100 border border-amber-300 rounded' : ''}`}
-                                            >
-                                                <span className="text-slate-500">{key}</span>
-                                                <span className="text-slate-400">=</span>
-                                                <span className="text-slate-700">{value}</span>
-                                            </span>
-                                        );
-                                    })}
-                                </div>
+                                <LabelDisplay labels={labels} highlightedLabels={serviceSelectors} />
                             </div>
                         </div>
                     )}
