@@ -5,15 +5,14 @@ RUN npm ci
 COPY frontend/ ./
 RUN npm run build
 
-FROM rust:1.89.0 AS backend-builder
+FROM rust:1.89.0-bookworm AS backend-builder
 WORKDIR /app
-COPY Cargo.toml Cargo.lock ./
 COPY . .
 RUN cargo build --release
 
-FROM gcr.io/distroless/static-debian12:nonroot
+FROM gcr.io/distroless/cc-debian12:nonroot
 WORKDIR /app
-COPY --from=backend-builder /app/target/release/constellation .
+COPY --from=backend-builder /app/target/release/constellation /app/constellation
 COPY --from=frontend-builder /app/frontend/dist ./frontend/dist
 
-ENTRYPOINT [ "./constellation" ]
+ENTRYPOINT ["/app/constellation"]
