@@ -59,6 +59,8 @@ pub struct ResourceMetadata {
     pub labels: Option<BTreeMap<String, String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub phase: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backend_refs: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -164,7 +166,7 @@ fn extract_resource_metadata(
 ) -> ResourceMetadata {
     match kind {
         ResourceKind::HTTPRoute => {
-            let hostnames = match spec {
+            let (hostnames, backend_refs) = match spec {
                 Some(ResourceSpec::HTTPRouteSpec(spec)) => {
                     let mut hosts = Vec::new();
                     if let Some(hostname_list) = &spec.hostnames {
@@ -172,9 +174,23 @@ fn extract_resource_metadata(
                             hosts.push(hostname.clone());
                         }
                     }
-                    if hosts.is_empty() { None } else { Some(hosts) }
+                    let hostnames = if hosts.is_empty() { None } else { Some(hosts) };
+
+                    let mut backends = Vec::new();
+                    for rule in spec.rules.iter().flatten() {
+                        for backend_ref in rule.backend_refs.iter().flatten() {
+                            if let Some(kind) = &backend_ref.kind {
+                                if kind == &ResourceKind::Service.to_string() {
+                                    backends.push(backend_ref.name.clone());
+                                }
+                            }
+                        }
+                    }
+                    let backend_refs = if backends.is_empty() { None } else { Some(backends) };
+
+                    (hostnames, backend_refs)
                 }
-                _ => None,
+                _ => (None, None),
             };
             ResourceMetadata {
                 hostnames,
@@ -182,6 +198,7 @@ fn extract_resource_metadata(
                 ports: None,
                 labels: None,
                 phase: None,
+                backend_refs,
             }
         }
         ResourceKind::Service => {
@@ -204,6 +221,7 @@ fn extract_resource_metadata(
                 ports,
                 labels: None,
                 phase: None,
+                backend_refs: None,
             }
         }
         ResourceKind::Pod => {
@@ -228,6 +246,7 @@ fn extract_resource_metadata(
                 ports,
                 labels,
                 phase: None,
+                backend_refs: None,
             }
         }
         ResourceKind::Namespace => ResourceMetadata {
@@ -236,6 +255,7 @@ fn extract_resource_metadata(
             ports: None,
             labels: None,
             phase: None,
+            backend_refs: None,
         },
     }
 }
@@ -243,7 +263,10 @@ fn extract_resource_metadata(
 fn new_pod(pod: &Pod) -> HierarchyNode {
     let spec = pod.spec.clone().map(ResourceSpec::PodSpec);
     let metadata = pod.metadata.clone();
-    let resource_metadata = extract_resource_metadata(&ResourceKind::Pod, &metadata, &spec);
+    let mut resource_metadata = extract_resource_metadata(&ResourceKind::Pod, &metadata, &spec);
+    
+    // Extract phase from pod status
+    resource_metadata.phase = pod.status.as_ref().and_then(|status| status.phase.clone());
     
     HierarchyNode {
         kind: ResourceKind::Pod,

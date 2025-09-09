@@ -1,10 +1,10 @@
 import { useState } from "react";
 import type { ResourceNode } from "./ResourceNode";
-import { NamespaceHeader } from "./resources/NamespaceHeader";
-import { ServiceBox } from "./resources/Service";
-import { PodBox } from "./resources/Pod";
-import { HttpRouteBox } from "./resources/HttpRoute";
-import { IngressBox } from "./resources/Ingress";
+import { NamespaceHeader } from "./components/NamespaceHeader";
+import { ServiceBox } from "./components/Service";
+import { PodBox } from "./components/Pod";
+import { HttpRouteBox } from "./components/HttpRoute";
+import { IngressBox } from "./components/Ingress";
 
 interface ResourceTreeProps {
     nodes: ResourceNode[];
@@ -24,10 +24,19 @@ interface ResourceNodeItemProps {
     node: ResourceNode;
     level?: number;
     serviceSelectors?: Record<string, string>;
+    backendRefs?: string[];
 }
 
-function ResourceNodeItem({ node, level = 0, serviceSelectors }: ResourceNodeItemProps) {
+function ResourceNodeItem({ node, level = 0, serviceSelectors, backendRefs }: ResourceNodeItemProps) {
     const [isCollapsed, setIsCollapsed] = useState(true);
+
+    // Collect backend references from HTTPRoute siblings
+    const collectBackendRefs = (relatives?: ResourceNode[]): string[] => {
+        if (!relatives) return [];
+        return relatives
+            .filter(node => node.kind === "HTTPRoute")
+            .flatMap(route => route.backend_refs || []);
+    };
 
     if (node.kind === "Namespace") {
         const resourceCount = countTotalResources(node);
@@ -40,16 +49,18 @@ function ResourceNodeItem({ node, level = 0, serviceSelectors }: ResourceNodeIte
                     isCollapsed={isCollapsed}
                     onToggle={() => setIsCollapsed(!isCollapsed)}
                 />
-                <div className={`transition-all duration-300 ease-in-out overflow-hidden ${
-                    isCollapsed ? 'max-h-0 opacity-0' : 'max-h-[600px] opacity-100'
-                }`}>
+                <div className={`transition-all duration-300 ease-in-out overflow-hidden ${isCollapsed ? 'max-h-0 opacity-0' : 'max-h-[600px] opacity-100'
+                    }`}>
                     <div className="p-4 space-y-6 overflow-y-auto max-h-[550px]">
                         {node.relatives && node.relatives.length > 0 ? (
-                            node.relatives.map((childNode) => (
-                                <div key={childNode.name} className="border border-gray-200 rounded-lg p-4 bg-gray-50/50 space-y-2">
-                                    <ResourceNodeItem node={childNode} level={level + 1} serviceSelectors={serviceSelectors} />
-                                </div>
-                            ))
+                            node.relatives.map((childNode) => {
+                                const backendRefs = collectBackendRefs(node.relatives);
+                                return (
+                                    <div key={childNode.name} className="border border-gray-200 rounded-lg p-4 bg-gray-50/50 space-y-2">
+                                        <ResourceNodeItem node={childNode} level={level + 1} serviceSelectors={serviceSelectors} backendRefs={backendRefs} />
+                                    </div>
+                                );
+                            })
                         ) : (
                             <div className="text-gray-500 italic text-center py-4">
                                 No connected resources found
@@ -66,7 +77,7 @@ function ResourceNodeItem({ node, level = 0, serviceSelectors }: ResourceNodeIte
             <div className="space-y-2">
                 <IngressBox name={node.name} />
                 {node.relatives && node.relatives.map((childNode) => (
-                    <ResourceNodeItem key={childNode.name} node={childNode} level={level + 1} serviceSelectors={serviceSelectors} />
+                    <ResourceNodeItem key={childNode.name} node={childNode} level={level + 1} serviceSelectors={serviceSelectors} backendRefs={backendRefs} />
                 ))}
             </div>
         );
@@ -75,20 +86,21 @@ function ResourceNodeItem({ node, level = 0, serviceSelectors }: ResourceNodeIte
     if (node.kind === "HTTPRoute") {
         return (
             <div className="space-y-2">
-                <HttpRouteBox name={node.name} hostnames={node.hostnames} />
+                <HttpRouteBox name={node.name} hostnames={node.hostnames} backend_refs={node.backend_refs} />
                 {node.relatives && node.relatives.map((childNode) => (
-                    <ResourceNodeItem key={childNode.name} node={childNode} level={level + 1} serviceSelectors={serviceSelectors} />
+                    <ResourceNodeItem key={childNode.name} node={childNode} level={level + 1} serviceSelectors={serviceSelectors} backendRefs={backendRefs} />
                 ))}
             </div>
         );
     }
 
     if (node.kind === "Service") {
+        const isTargetedByRoute = backendRefs?.includes(node.name) || false;
         return (
             <div className="space-y-2">
-                <ServiceBox name={node.name} selectors={node.selectors} ports={node.ports} />
+                <ServiceBox name={node.name} selectors={node.selectors} ports={node.ports} isTargetedByRoute={isTargetedByRoute} />
                 {node.relatives && node.relatives.map((childNode) => (
-                    <ResourceNodeItem key={childNode.name} node={childNode} level={level + 1} serviceSelectors={node.selectors} />
+                    <ResourceNodeItem key={childNode.name} node={childNode} level={level + 1} serviceSelectors={node.selectors} backendRefs={backendRefs} />
                 ))}
             </div>
         );
@@ -97,9 +109,9 @@ function ResourceNodeItem({ node, level = 0, serviceSelectors }: ResourceNodeIte
     if (node.kind === "Pod") {
         return (
             <div className="space-y-2">
-                <PodBox name={node.name} labels={node.labels} ports={node.ports} serviceSelectors={serviceSelectors} />
+                <PodBox name={node.name} labels={node.labels} ports={node.ports} serviceSelectors={serviceSelectors} phase={node.phase} />
                 {node.relatives && node.relatives.map((childNode) => (
-                    <ResourceNodeItem key={childNode.name} node={childNode} level={level + 1} serviceSelectors={serviceSelectors} />
+                    <ResourceNodeItem key={childNode.name} node={childNode} level={level + 1} serviceSelectors={serviceSelectors} backendRefs={backendRefs} />
                 ))}
             </div>
         );

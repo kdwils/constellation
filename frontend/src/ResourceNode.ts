@@ -11,4 +11,5 @@ export interface ResourceNode {
     ports?: number[];
     labels?: Record<string, string>;
     phase?: string;
+    backend_refs?: string[];
 }
