@@ -2,23 +2,43 @@ import { LabelDisplay } from "./LabelDisplay";
 import { ResourceBox } from "./ResourceBox";
 import { ResourceHeader } from "./ResourceHeader";
 import { MetadataRow } from "./MetadataRow";
-import { PortList } from "./PortList";
+import { MetadataItem } from "./MetadataItem";
+import { MetadataContainer } from "./MetadataContainer";
+import { CompactMetadataRow } from "./CompactMetadataRow";
+import { PortMappingList } from "./PortMappingList";
+import type { ContainerPortInfo } from "../ResourceNode";
 
 interface ServiceBoxProps {
     name: string;
     selectors?: Record<string, string>;
-    ports?: number[];
+    portMappings?: string[];
     isTargetedByRoute?: boolean;
+    serviceType?: string;
+    clusterIp?: string;
+    externalIps?: string[];
+    childContainerPorts?: ContainerPortInfo[];
 }
 
-export function ServiceBox({ name, selectors, ports, isTargetedByRoute }: ServiceBoxProps) {
-    const hasMetadata = (selectors && Object.keys(selectors).length > 0) || (ports && ports.length > 0);
+export function ServiceBox({ name, selectors, portMappings, isTargetedByRoute, serviceType, clusterIp, externalIps, childContainerPorts }: ServiceBoxProps) {
+    const hasMetadata = (selectors && Object.keys(selectors).length > 0) || (portMappings && portMappings.length > 0) || serviceType || clusterIp || (externalIps && externalIps.length > 0);
 
     return (
         <ResourceBox borderColor={isTargetedByRoute ? "border-amber-400 border-2" : "border-amber-500"} marginLeft="ml-8">
             <ResourceHeader name={name} type="SERVICE" dotColor="bg-amber-500" />
             {hasMetadata && (
-                <div className="mt-2 ml-5 space-y-1 text-xs">
+                <MetadataContainer>
+                    <CompactMetadataRow>
+                        {serviceType && <MetadataItem label="type" value={serviceType} />}
+                        {portMappings && portMappings.length > 0 && (
+                            <div className="flex items-center gap-1">
+                                <span className="text-slate-500">ports:</span>
+                                <PortMappingList portMappings={portMappings} childContainerPorts={childContainerPorts} />
+                            </div>
+                        )}
+                        {clusterIp && <MetadataItem label="cluster-ip" value={clusterIp} />}
+                        {externalIps && externalIps.length > 0 && <MetadataItem label="external-ip" value={externalIps} />}
+                    </CompactMetadataRow>
+                    
                     {selectors && Object.keys(selectors).length > 0 && (
                         <MetadataRow icon="selectors" alignItems="start">
                             <div className="flex-1 text-slate-600 font-medium">
@@ -26,12 +46,7 @@ export function ServiceBox({ name, selectors, ports, isTargetedByRoute }: Servic
                             </div>
                         </MetadataRow>
                     )}
-                    {ports && ports.length > 0 && (
-                        <MetadataRow icon="ports">
-                            <PortList ports={ports} />
-                        </MetadataRow>
-                    )}
-                </div>
+                </MetadataContainer>
             )}
         </ResourceBox>
     );
