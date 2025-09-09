@@ -27,23 +27,23 @@ pub enum ResourceKind {
     HTTPRoute,
 }
 
-impl ToString for ResourceKind {
-    fn to_string(&self) -> String {
+impl std::fmt::Display for ResourceKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ResourceKind::HTTPRoute => "HTTPRoute".to_string(),
-            ResourceKind::Service => "Service".to_string(),
-            ResourceKind::Pod => "Pod".to_string(),
-            ResourceKind::Namespace => "Namespace".to_string(),
+            ResourceKind::HTTPRoute => write!(f, "HTTPRoute"),
+            ResourceKind::Service => write!(f, "Service"),
+            ResourceKind::Pod => write!(f, "Pod"),
+            ResourceKind::Namespace => write!(f, "Namespace"),
         }
     }
 }
 
 #[derive(Debug, Clone)]
 pub enum ResourceSpec {
-    NamespaceSpec(v1::NamespaceSpec),
-    ServiceSpec(v1::ServiceSpec),
-    PodSpec(v1::PodSpec),
-    HTTPRouteSpec(HTTPRouteSpec),
+    Namespace(()),
+    Service(Box<v1::ServiceSpec>),
+    Pod(Box<v1::PodSpec>),
+    HTTPRoute(HTTPRouteSpec),
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -166,7 +166,7 @@ fn extract_resource_metadata(
     match kind {
         ResourceKind::HTTPRoute => {
             let (hostnames, backend_refs) = match spec {
-                Some(ResourceSpec::HTTPRouteSpec(spec)) => {
+                Some(ResourceSpec::HTTPRoute(spec)) => {
                     let mut hosts = Vec::new();
                     if let Some(hostname_list) = &spec.hostnames {
                         for hostname in hostname_list {
@@ -206,7 +206,7 @@ fn extract_resource_metadata(
         }
         ResourceKind::Service => {
             let (selectors, ports) = match spec {
-                Some(ResourceSpec::ServiceSpec(spec)) => {
+                Some(ResourceSpec::Service(spec)) => {
                     let selectors = spec.selector.clone();
                     let ports = spec.ports.as_ref().map(|port_list| {
                         port_list.iter().map(|p| p.port as u32).collect::<Vec<_>>()
@@ -227,7 +227,7 @@ fn extract_resource_metadata(
         ResourceKind::Pod => {
             let labels = metadata.labels.clone();
             let ports = match spec {
-                Some(ResourceSpec::PodSpec(spec)) => {
+                Some(ResourceSpec::Pod(spec)) => {
                     let mut port_list = Vec::new();
                     for container in &spec.containers {
                         if let Some(container_ports) = &container.ports {
@@ -265,7 +265,7 @@ fn extract_resource_metadata(
 }
 
 fn new_pod(pod: &Pod) -> HierarchyNode {
-    let spec = pod.spec.clone().map(ResourceSpec::PodSpec);
+    let spec = pod.spec.clone().map(|s| ResourceSpec::Pod(Box::new(s)));
     let metadata = pod.metadata.clone();
     let mut resource_metadata = extract_resource_metadata(&ResourceKind::Pod, &metadata, &spec);
 
@@ -283,7 +283,7 @@ fn new_pod(pod: &Pod) -> HierarchyNode {
 }
 
 fn new_service(service: &Service) -> HierarchyNode {
-    let spec = service.spec.clone().map(ResourceSpec::ServiceSpec);
+    let spec = service.spec.clone().map(|s| ResourceSpec::Service(Box::new(s)));
     let metadata = service.metadata.clone();
     let resource_metadata = extract_resource_metadata(&ResourceKind::Service, &metadata, &spec);
 
@@ -338,7 +338,7 @@ fn remove_httproute_node(
 }
 
 fn update_service_relationships(
-    hierarchy: &mut Vec<HierarchyNode>,
+    hierarchy: &mut [HierarchyNode],
     service: &Service,
     pods: &[Pod],
 ) {
@@ -361,7 +361,7 @@ fn update_service_relationships(
 
             for httproute in namespace_node.relatives.iter_mut() {
                 if httproute.kind == ResourceKind::HTTPRoute
-                    && let Some(ResourceSpec::HTTPRouteSpec(spec)) = &httproute.spec
+                    && let Some(ResourceSpec::HTTPRoute(spec)) = &httproute.spec
                 {
                     let referenced = spec
                         .rules
@@ -378,7 +378,7 @@ fn update_service_relationships(
                         let mut new_service = service_node.clone();
 
                         // Add matching pods to the service
-                        if let Some(ResourceSpec::ServiceSpec(service_spec)) = &service_node.spec {
+                        if let Some(ResourceSpec::Service(service_spec)) = &service_node.spec {
                             new_service.relatives.extend(
                                 pods.iter()
                                     .filter(|pod| {
@@ -404,7 +404,7 @@ fn update_service_relationships(
                 let mut new_service = service_node.clone();
 
                 // Add matching pods to the service
-                if let Some(ResourceSpec::ServiceSpec(service_spec)) = &service_node.spec {
+                if let Some(ResourceSpec::Service(service_spec)) = &service_node.spec {
                     new_service.relatives.extend(
                         pods.iter()
                             .filter(|pod| {
@@ -427,7 +427,7 @@ fn update_service_relationships(
 }
 
 fn update_httproute_relationships(
-    hierarchy: &mut Vec<HierarchyNode>,
+    hierarchy: &mut [HierarchyNode],
     httproute: &HTTPRoute,
     services: &[Service],
     pods: &[Pod],
@@ -444,7 +444,7 @@ fn update_httproute_relationships(
             && namespace_node.metadata.name.as_deref() == httproute_ns
         {
             let metadata = httproute.metadata.clone();
-            let spec = Some(ResourceSpec::HTTPRouteSpec(httproute.spec.clone()));
+            let spec = Some(ResourceSpec::HTTPRoute(httproute.spec.clone()));
             let resource_metadata =
                 extract_resource_metadata(&ResourceKind::HTTPRoute, &metadata, &spec);
 
@@ -458,7 +458,7 @@ fn update_httproute_relationships(
             };
 
             // Add referenced services to the HTTPRoute
-            if let Some(ResourceSpec::HTTPRouteSpec(spec)) = &httproute_node.spec {
+            if let Some(ResourceSpec::HTTPRoute(spec)) = &httproute_node.spec {
                 for service in services.iter() {
                     let service_name = service.name().unwrap_or_default();
                     let service_ns = service.metadata.namespace.as_deref();
@@ -482,7 +482,7 @@ fn update_httproute_relationships(
                         let mut service_node = new_service(service);
 
                         // Add matching pods to the service
-                        if let Some(ResourceSpec::ServiceSpec(service_spec)) = &service_node.spec {
+                        if let Some(ResourceSpec::Service(service_spec)) = &service_node.spec {
                             service_node.relatives.extend(
                                 pods.iter()
                                     .filter(|pod| {
@@ -545,7 +545,7 @@ async fn build_initial_relationships(ctx: Context) {
 
     for namespace in namespace_snapshot.iter() {
         let metadata = namespace.metadata.clone();
-        let spec = namespace.spec.clone().map(ResourceSpec::NamespaceSpec);
+        let spec = Some(ResourceSpec::Namespace(()));
         let resource_metadata =
             extract_resource_metadata(&ResourceKind::Namespace, &metadata, &spec);
 
@@ -567,7 +567,7 @@ async fn build_initial_relationships(ctx: Context) {
                 && httproute.metadata.namespace == node.metadata.name
         }) {
             let metadata = httproute.metadata.clone();
-            let spec = Some(ResourceSpec::HTTPRouteSpec(httproute.spec.clone()));
+            let spec = Some(ResourceSpec::HTTPRoute(httproute.spec.clone()));
             let resource_metadata =
                 extract_resource_metadata(&ResourceKind::HTTPRoute, &metadata, &spec);
 
@@ -592,7 +592,7 @@ async fn build_initial_relationships(ctx: Context) {
         let service_namespace = service.metadata.namespace.clone().unwrap_or_default();
         let service_spec = service.spec.clone().unwrap_or_default();
         let metadata = service.metadata.clone();
-        let spec = service.spec.clone().map(ResourceSpec::ServiceSpec);
+        let spec = service.spec.clone().map(|s| ResourceSpec::Service(Box::new(s)));
         let resource_metadata = extract_resource_metadata(&ResourceKind::Service, &metadata, &spec);
 
         let mut service_node = HierarchyNode {
@@ -636,7 +636,7 @@ async fn build_initial_relationships(ctx: Context) {
             node.kind == ResourceKind::Namespace && node.metadata.name == service.metadata.namespace
         }) {
             namespace.relatives.iter_mut().for_each(|node| {
-                if let Some(ResourceSpec::HTTPRouteSpec(spec)) = &node.spec {
+                if let Some(ResourceSpec::HTTPRoute(spec)) = &node.spec {
                     spec.rules
                         .iter()
                         .flatten()
@@ -866,7 +866,7 @@ where
                         node.kind == ResourceKind::Namespace && node.name == namespace_name.as_ref()
                     }) {
                         let metadata = namespace.metadata.clone();
-                        let spec = namespace.spec.clone().map(ResourceSpec::NamespaceSpec);
+                        let spec = Some(ResourceSpec::Namespace(()));
                         let resource_metadata =
                             extract_resource_metadata(&ResourceKind::Namespace, &metadata, &spec);
 
@@ -1081,7 +1081,7 @@ mod tests {
                 namespace: None,
                 ..Default::default()
             },
-            spec: Some(ResourceSpec::NamespaceSpec(Default::default())),
+            spec: Some(ResourceSpec::Namespace(())),
             resource_metadata: ResourceMetadata {
                 hostnames: None,
                 selectors: None,
@@ -1337,7 +1337,7 @@ mod tests {
     fn test_extract_resource_metadata_httproute() {
         let httproute = create_test_httproute("test-route", "default", "test-service");
         let metadata = httproute.metadata.clone();
-        let spec = Some(ResourceSpec::HTTPRouteSpec(httproute.spec.clone()));
+        let spec = Some(ResourceSpec::HTTPRoute(httproute.spec.clone()));
 
         let resource_metadata =
             extract_resource_metadata(&ResourceKind::HTTPRoute, &metadata, &spec);
@@ -1356,7 +1356,7 @@ mod tests {
         selector.insert("app".to_string(), "web".to_string());
         let service = create_test_service("test-service", "default", selector.clone());
         let metadata = service.metadata.clone();
-        let spec = Some(ResourceSpec::ServiceSpec(service.spec.clone().unwrap()));
+        let spec = Some(ResourceSpec::Service(Box::new(service.spec.clone().unwrap())));
 
         let resource_metadata = extract_resource_metadata(&ResourceKind::Service, &metadata, &spec);
 
@@ -1412,7 +1412,7 @@ mod tests {
         // Add an HTTPRoute to the namespace
         let httproute = create_test_httproute("test-route", "default", "test-service");
         let metadata = httproute.metadata.clone();
-        let spec = Some(ResourceSpec::HTTPRouteSpec(httproute.spec.clone()));
+        let spec = Some(ResourceSpec::HTTPRoute(httproute.spec.clone()));
         let resource_metadata =
             extract_resource_metadata(&ResourceKind::HTTPRoute, &metadata, &spec);
 
