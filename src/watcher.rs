@@ -283,7 +283,10 @@ fn new_pod(pod: &Pod) -> HierarchyNode {
 }
 
 fn new_service(service: &Service) -> HierarchyNode {
-    let spec = service.spec.clone().map(|s| ResourceSpec::Service(Box::new(s)));
+    let spec = service
+        .spec
+        .clone()
+        .map(|s| ResourceSpec::Service(Box::new(s)));
     let metadata = service.metadata.clone();
     let resource_metadata = extract_resource_metadata(&ResourceKind::Service, &metadata, &spec);
 
@@ -337,11 +340,7 @@ fn remove_httproute_node(
     }
 }
 
-fn update_service_relationships(
-    hierarchy: &mut [HierarchyNode],
-    service: &Service,
-    pods: &[Pod],
-) {
+fn update_service_relationships(hierarchy: &mut [HierarchyNode], service: &Service, pods: &[Pod]) {
     let service_name = service.name().unwrap_or_default();
     let service_ns = service.metadata.namespace.as_deref();
     let service_node = new_service(service);
@@ -592,7 +591,10 @@ async fn build_initial_relationships(ctx: Context) {
         let service_namespace = service.metadata.namespace.clone().unwrap_or_default();
         let service_spec = service.spec.clone().unwrap_or_default();
         let metadata = service.metadata.clone();
-        let spec = service.spec.clone().map(|s| ResourceSpec::Service(Box::new(s)));
+        let spec = service
+            .spec
+            .clone()
+            .map(|s| ResourceSpec::Service(Box::new(s)));
         let resource_metadata = extract_resource_metadata(&ResourceKind::Service, &metadata, &spec);
 
         let mut service_node = HierarchyNode {
@@ -1356,7 +1358,9 @@ mod tests {
         selector.insert("app".to_string(), "web".to_string());
         let service = create_test_service("test-service", "default", selector.clone());
         let metadata = service.metadata.clone();
-        let spec = Some(ResourceSpec::Service(Box::new(service.spec.clone().unwrap())));
+        let spec = Some(ResourceSpec::Service(Box::new(
+            service.spec.clone().unwrap(),
+        )));
 
         let resource_metadata = extract_resource_metadata(&ResourceKind::Service, &metadata, &spec);
 
