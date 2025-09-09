@@ -245,20 +245,45 @@ fn extract_resource_metadata(
             }
         }
         ResourceKind::Service => {
-            let (selectors, ports, port_mappings, target_ports, target_port_names, service_type, cluster_ip, external_ips) = match spec {
+            let (
+                selectors,
+                ports,
+                port_mappings,
+                target_ports,
+                target_port_names,
+                service_type,
+                cluster_ip,
+                external_ips,
+            ) = match spec {
                 Some(ResourceSpec::Service(spec)) => {
                     let selectors = spec.selector.clone();
-                    let (ports, port_mappings, target_ports, target_port_names) = spec.ports.as_ref()
+                    let (ports, port_mappings, target_ports, target_port_names) = spec
+                        .ports
+                        .as_ref()
                         .map(|port_list| {
                             let port_info = extract_port_info(port_list);
-                            (Some(port_info.service_ports), Some(port_info.port_mappings), Some(port_info.target_ports), Some(port_info.target_port_names))
+                            (
+                                Some(port_info.service_ports),
+                                Some(port_info.port_mappings),
+                                Some(port_info.target_ports),
+                                Some(port_info.target_port_names),
+                            )
                         })
                         .unwrap_or((None, None, None, None));
-                    
+
                     let service_type = spec.type_.clone();
                     let cluster_ip = spec.cluster_ip.clone();
                     let external_ips = spec.external_ips.clone().filter(|ips| !ips.is_empty());
-                    (selectors, ports, port_mappings, target_ports, target_port_names, service_type, cluster_ip, external_ips)
+                    (
+                        selectors,
+                        ports,
+                        port_mappings,
+                        target_ports,
+                        target_port_names,
+                        service_type,
+                        cluster_ip,
+                        external_ips,
+                    )
                 }
                 _ => (None, None, None, None, None, None, None, None),
             };
@@ -285,7 +310,7 @@ fn extract_resource_metadata(
                 Some(ResourceSpec::Pod(spec)) => {
                     let mut port_list = Vec::new();
                     let mut container_port_list = Vec::new();
-                    
+
                     for container in &spec.containers {
                         if let Some(container_ports) = &container.ports {
                             for port in container_ports {
@@ -298,10 +323,18 @@ fn extract_resource_metadata(
                             }
                         }
                     }
-                    
-                    let ports = if port_list.is_empty() { None } else { Some(port_list) };
-                    let container_ports = if container_port_list.is_empty() { None } else { Some(container_port_list) };
-                    
+
+                    let ports = if port_list.is_empty() {
+                        None
+                    } else {
+                        Some(port_list)
+                    };
+                    let container_ports = if container_port_list.is_empty() {
+                        None
+                    } else {
+                        Some(container_port_list)
+                    };
+
                     (ports, container_ports)
                 }
                 _ => (None, None),
@@ -364,9 +397,10 @@ fn new_pod(pod: &Pod) -> HierarchyNode {
 
 fn extract_port_info(ports: &[ServicePort]) -> ServicePortInfo {
     let service_ports: Vec<u32> = ports.iter().map(|p| p.port as u32).collect();
-    
-    let port_mappings: Vec<String> = ports.iter().map(|p| {
-        match &p.target_port {
+
+    let port_mappings: Vec<String> = ports
+        .iter()
+        .map(|p| match &p.target_port {
             Some(IntOrString::Int(i)) => {
                 if *i == p.port {
                     return p.port.to_string();
@@ -375,24 +409,26 @@ fn extract_port_info(ports: &[ServicePort]) -> ServicePortInfo {
             }
             Some(IntOrString::String(s)) => format!("{}→{}", p.port, s),
             None => p.port.to_string(),
-        }
-    }).collect();
-    
-    let target_ports: Vec<u32> = ports.iter().filter_map(|p| {
-        match &p.target_port {
-            Some(IntOrString::Int(i)) => Some(*i as u32),
-            Some(IntOrString::String(_)) => Some(p.port as u32),
-            None => Some(p.port as u32),
-        }
-    }).collect();
-    
-    let target_port_names: Vec<String> = ports.iter().filter_map(|p| {
-        match &p.target_port {
+        })
+        .collect();
+
+    let target_ports: Vec<u32> = ports
+        .iter()
+        .map(|p| match &p.target_port {
+            Some(IntOrString::Int(i)) => *i as u32,
+            Some(IntOrString::String(_)) => p.port as u32,
+            None => p.port as u32,
+        })
+        .collect();
+
+    let target_port_names: Vec<String> = ports
+        .iter()
+        .filter_map(|p| match &p.target_port {
             Some(IntOrString::String(s)) => Some(s.clone()),
             _ => None,
-        }
-    }).collect();
-    
+        })
+        .collect();
+
     ServicePortInfo {
         service_ports,
         port_mappings,
@@ -402,30 +438,47 @@ fn extract_port_info(ports: &[ServicePort]) -> ServicePortInfo {
 }
 
 fn extract_load_balancer_ips(service: &Service) -> Vec<String> {
-    println!("Checking service {} for LoadBalancer IPs", service.name().unwrap_or_default());
-    
+    println!(
+        "Checking service {} for LoadBalancer IPs",
+        service.name().unwrap_or_default()
+    );
+
     let Some(status) = &service.status else {
-        println!("No status for service {}", service.name().unwrap_or_default());
+        println!(
+            "No status for service {}",
+            service.name().unwrap_or_default()
+        );
         return Vec::new();
     };
-    
+
     let Some(load_balancer) = &status.load_balancer else {
-        println!("No load_balancer for service {}", service.name().unwrap_or_default());
+        println!(
+            "No load_balancer for service {}",
+            service.name().unwrap_or_default()
+        );
         return Vec::new();
     };
-    
+
     let Some(ingress_list) = &load_balancer.ingress else {
-        println!("No ingress list for service {}", service.name().unwrap_or_default());
+        println!(
+            "No ingress list for service {}",
+            service.name().unwrap_or_default()
+        );
         return Vec::new();
     };
-    
+
     let ips: Vec<String> = ingress_list
         .iter()
         .filter_map(|ingress| ingress.ip.as_ref().or(ingress.hostname.as_ref()))
         .cloned()
         .collect();
-    
-    println!("Found {} IPs for service {}: {:?}", ips.len(), service.name().unwrap_or_default(), ips);
+
+    println!(
+        "Found {} IPs for service {}: {:?}",
+        ips.len(),
+        service.name().unwrap_or_default(),
+        ips
+    );
     ips
 }
 
@@ -1633,7 +1686,10 @@ mod tests {
         let port_info = extract_port_info(&ports);
 
         assert_eq!(port_info.service_ports, vec![80, 443, 3000, 9000]);
-        assert_eq!(port_info.port_mappings, vec!["80→http", "443→8443", "3000", "9000"]);
+        assert_eq!(
+            port_info.port_mappings,
+            vec!["80→http", "443→8443", "3000", "9000"]
+        );
         assert_eq!(port_info.target_ports, vec![80, 8443, 3000, 9000]);
         assert_eq!(port_info.target_port_names, vec!["http"]);
     }
@@ -1675,10 +1731,19 @@ mod tests {
         let resource_metadata = extract_resource_metadata(&ResourceKind::Service, &metadata, &spec);
 
         assert_eq!(resource_metadata.ports, Some(vec![80, 443]));
-        assert_eq!(resource_metadata.port_mappings, Some(vec!["80→http".to_string(), "443→8443".to_string()]));
+        assert_eq!(
+            resource_metadata.port_mappings,
+            Some(vec!["80→http".to_string(), "443→8443".to_string()])
+        );
         assert_eq!(resource_metadata.target_ports, Some(vec![80, 8443]));
-        assert_eq!(resource_metadata.target_port_names, Some(vec!["http".to_string()]));
-        assert_eq!(resource_metadata.service_type, Some("ClusterIP".to_string()));
+        assert_eq!(
+            resource_metadata.target_port_names,
+            Some(vec!["http".to_string()])
+        );
+        assert_eq!(
+            resource_metadata.service_type,
+            Some("ClusterIP".to_string())
+        );
         assert_eq!(resource_metadata.cluster_ip, Some("10.1.2.3".to_string()));
     }
 
@@ -1698,32 +1763,30 @@ mod tests {
         };
 
         let pod_spec = PodSpec {
-            containers: vec![
-                Container {
-                    name: "web".to_string(),
-                    ports: Some(vec![
-                        ContainerPort {
-                            container_port: 8080,
-                            name: Some("http".to_string()),
-                            protocol: Some("TCP".to_string()),
-                            ..Default::default()
-                        },
-                        ContainerPort {
-                            container_port: 8443,
-                            name: Some("https".to_string()),
-                            protocol: Some("TCP".to_string()),
-                            ..Default::default()
-                        },
-                        ContainerPort {
-                            container_port: 9090,
-                            name: None,
-                            protocol: Some("TCP".to_string()),
-                            ..Default::default()
-                        },
-                    ]),
-                    ..Default::default()
-                },
-            ],
+            containers: vec![Container {
+                name: "web".to_string(),
+                ports: Some(vec![
+                    ContainerPort {
+                        container_port: 8080,
+                        name: Some("http".to_string()),
+                        protocol: Some("TCP".to_string()),
+                        ..Default::default()
+                    },
+                    ContainerPort {
+                        container_port: 8443,
+                        name: Some("https".to_string()),
+                        protocol: Some("TCP".to_string()),
+                        ..Default::default()
+                    },
+                    ContainerPort {
+                        container_port: 9090,
+                        name: None,
+                        protocol: Some("TCP".to_string()),
+                        ..Default::default()
+                    },
+                ]),
+                ..Default::default()
+            }],
             ..Default::default()
         };
 
@@ -1732,15 +1795,15 @@ mod tests {
 
         let container_ports = resource_metadata.container_ports.unwrap();
         assert_eq!(container_ports.len(), 3);
-        
+
         assert_eq!(container_ports[0].port, 8080);
         assert_eq!(container_ports[0].name, Some("http".to_string()));
         assert_eq!(container_ports[0].protocol, Some("TCP".to_string()));
-        
+
         assert_eq!(container_ports[1].port, 8443);
         assert_eq!(container_ports[1].name, Some("https".to_string()));
         assert_eq!(container_ports[1].protocol, Some("TCP".to_string()));
-        
+
         assert_eq!(container_ports[2].port, 9090);
         assert_eq!(container_ports[2].name, None);
         assert_eq!(container_ports[2].protocol, Some("TCP".to_string()));
@@ -1760,24 +1823,20 @@ mod tests {
             containers: vec![
                 Container {
                     name: "web".to_string(),
-                    ports: Some(vec![
-                        ContainerPort {
-                            container_port: 8080,
-                            name: Some("http".to_string()),
-                            ..Default::default()
-                        },
-                    ]),
+                    ports: Some(vec![ContainerPort {
+                        container_port: 8080,
+                        name: Some("http".to_string()),
+                        ..Default::default()
+                    }]),
                     ..Default::default()
                 },
                 Container {
                     name: "sidecar".to_string(),
-                    ports: Some(vec![
-                        ContainerPort {
-                            container_port: 9000,
-                            name: Some("metrics".to_string()),
-                            ..Default::default()
-                        },
-                    ]),
+                    ports: Some(vec![ContainerPort {
+                        container_port: 9000,
+                        name: Some("metrics".to_string()),
+                        ..Default::default()
+                    }]),
                     ..Default::default()
                 },
             ],
@@ -1789,10 +1848,10 @@ mod tests {
 
         let container_ports = resource_metadata.container_ports.unwrap();
         assert_eq!(container_ports.len(), 2);
-        
+
         assert_eq!(container_ports[0].port, 8080);
         assert_eq!(container_ports[0].name, Some("http".to_string()));
-        
+
         assert_eq!(container_ports[1].port, 9000);
         assert_eq!(container_ports[1].name, Some("metrics".to_string()));
     }
