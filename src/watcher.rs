@@ -16,7 +16,6 @@ use tokio::sync::RwLock;
 use gateway_api::httproutes::{HTTPRoute, HTTPRouteSpec};
 use k8s_openapi::api::core::v1::{Namespace, Pod, Service};
 use kube::api::ObjectMeta;
-use serde;
 use serde::Serialize;
 use tracing::{error, info};
 
@@ -134,11 +133,11 @@ pub async fn run(state: State) {
     );
 
     let ctx: Context = Context {
-        state: state,
-        pod_store: pod_store,
-        service_store: service_store,
-        namespace_store: namespace_store,
-        httproute_store: httproute_store,
+        state,
+        pod_store,
+        service_store,
+        namespace_store,
+        httproute_store,
     };
 
     let pod_stream = Box::pin(pod_rf);
@@ -179,11 +178,10 @@ fn extract_resource_metadata(
                     let mut backends = Vec::new();
                     for rule in spec.rules.iter().flatten() {
                         for backend_ref in rule.backend_refs.iter().flatten() {
-                            if let Some(kind) = &backend_ref.kind {
-                                if kind == &ResourceKind::Service.to_string() {
+                            if let Some(kind) = &backend_ref.kind
+                                && kind == &ResourceKind::Service.to_string() {
                                     backends.push(backend_ref.name.clone());
                                 }
-                            }
                         }
                     }
                     let backend_refs = if backends.is_empty() {
@@ -361,8 +359,8 @@ fn update_service_relationships(
             let mut service_added_to_httproute = false;
 
             for httproute in namespace_node.relatives.iter_mut() {
-                if httproute.kind == ResourceKind::HTTPRoute {
-                    if let Some(ResourceSpec::HTTPRouteSpec(spec)) = &httproute.spec {
+                if httproute.kind == ResourceKind::HTTPRoute
+                    && let Some(ResourceSpec::HTTPRouteSpec(spec)) = &httproute.spec {
                         let referenced = spec
                             .rules
                             .iter()
@@ -402,7 +400,6 @@ fn update_service_relationships(
                             service_added_to_httproute = true;
                         }
                     }
-                }
             }
 
             // If service wasn't added to any HTTPRoute, add it directly to namespace
@@ -518,15 +515,13 @@ fn add_pod(node: &mut HierarchyNode, pod: &v1::Pod, service_name: &str, service_
     if node.kind == ResourceKind::Service
         && node.name == service_name
         && node.metadata.namespace.as_deref() == service_ns
-    {
-        if !node.relatives.iter().any(|p| {
+        && !node.relatives.iter().any(|p| {
             p.kind == ResourceKind::Pod
                 && p.name == pod.metadata.name.as_deref().unwrap_or_default()
                 && p.metadata.namespace.as_deref() == pod.metadata.namespace.as_deref()
         }) {
             node.relatives.push(new_pod(pod));
         }
-    }
 
     for child in node.relatives.iter_mut() {
         add_pod(child, pod, service_name, service_ns);
@@ -650,15 +645,14 @@ async fn build_initial_relationships(ctx: Context) {
                         .flat_map(|rule| &rule.backend_refs)
                         .flatten()
                         .for_each(|r| {
-                            if let Some(kind) = &r.kind {
-                                if kind == &ResourceKind::Service.to_string()
+                            if let Some(kind) = &r.kind
+                                && kind == &ResourceKind::Service.to_string()
                                     && r.name
                                         == service
                                             .metadata
                                             .name
                                             .clone()
                                             .unwrap_or_default()
-                                            .to_string()
                                 {
                                     info!(
                                         "adding service {:?} to httproute {:?}",
@@ -667,7 +661,6 @@ async fn build_initial_relationships(ctx: Context) {
                                     node.relatives.push(service_node.clone());
                                     service_added_to_httproute = true;
                                 }
-                            }
                         });
                 }
             });
@@ -679,8 +672,8 @@ async fn build_initial_relationships(ctx: Context) {
         }
 
         // If service was not added to any HTTPRoute, add it directly to namespace
-        if !service_added_to_httproute {
-            if let Some(namespace_node) = hierarchy.iter_mut().find(|node| {
+        if !service_added_to_httproute
+            && let Some(namespace_node) = hierarchy.iter_mut().find(|node| {
                 node.kind == ResourceKind::Namespace
                     && node.metadata.name == service.metadata.namespace
             }) {
@@ -691,7 +684,6 @@ async fn build_initial_relationships(ctx: Context) {
                 namespace_node.relatives.push(service_node);
                 assigned_nodes.insert(service.name().unwrap_or_default().as_ref().to_string());
             }
-        }
     }
 
     for pod in pods_snapshot.iter() {
@@ -702,7 +694,7 @@ async fn build_initial_relationships(ctx: Context) {
             continue;
         }
 
-        let pod_node = new_pod(&pod);
+        let pod_node = new_pod(pod);
 
         if let Some(namespace_node) = hierarchy
             .iter_mut()
@@ -745,7 +737,7 @@ pub fn selectors_match(
 ) -> bool {
     selectors
         .iter()
-        .all(|(key, value)| labels.get(key).map_or(false, |v| v == value))
+        .all(|(key, value)| labels.get(key) == Some(value))
 }
 
 pub async fn pod_watcher<S>(ctx: Context, mut pod_stream: S)
@@ -967,14 +959,13 @@ where
                                     );
                                 }
 
-                                if !pod_assigned {
-                                    if let Some(ns_node) = hierarchy.iter_mut().find(|node| {
+                                if !pod_assigned
+                                    && let Some(ns_node) = hierarchy.iter_mut().find(|node| {
                                         node.kind == ResourceKind::Namespace
                                             && node.name == namespace_name.as_ref()
                                     }) {
                                         ns_node.relatives.push(new_pod(pod));
                                     }
-                                }
                             }
                         }
                     }

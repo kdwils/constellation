@@ -2,7 +2,6 @@
 mod router;
 mod watcher;
 
-use tracing_subscriber;
 use watcher::State;
 
 #[tokio::main]
