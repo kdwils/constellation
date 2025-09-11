@@ -262,7 +262,7 @@ async fn broadcast_state_update(ctx: &Context) {
     let hierarchy = ctx.state.hierarchy.read().await;
     let state = hierarchy.clone();
     drop(hierarchy);
-    
+
     let _ = ctx.state.state_updates.send(state);
 }
 
@@ -1080,7 +1080,7 @@ where
                     let mut hierarchy = ctx.state.hierarchy.write().await;
                     update_pod_relationships(&mut hierarchy, &pod);
                     drop(hierarchy);
-                    
+
                     broadcast_state_update(&ctx).await;
                 }
                 watcher::Event::Delete(pod) => {
@@ -1097,7 +1097,7 @@ where
                         remove_node_by_kind(root, ResourceKind::Pod, pod_name, pod_ns);
                     }
                     drop(nodes);
-                    
+
                     broadcast_state_update(&ctx).await;
                 }
                 _ => {}
@@ -1128,7 +1128,7 @@ where
                     let mut hierarchy = ctx.state.hierarchy.write().await;
                     update_service_relationships(&mut hierarchy, &service, &snapshot.pods);
                     drop(hierarchy);
-                    
+
                     broadcast_state_update(&ctx).await;
                 }
                 watcher::Event::Delete(service) => {
@@ -1145,7 +1145,7 @@ where
                         remove_node_by_kind(node, ResourceKind::Service, service_name, service_ns);
                     }
                     drop(hierarchy);
-                    
+
                     broadcast_state_update(&ctx).await;
                 }
                 _ => {}

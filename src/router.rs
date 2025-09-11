@@ -67,7 +67,7 @@ async fn state_stream(AxumState(app_state): AxumState<AppState>) -> Response {
     // Combine initial state + updates
     let combined_stream = stream::once(async { initial_event })
         .chain(update_stream)
-        .map(|data| Ok::<_, axum::Error>(data));
+        .map(Ok::<_, axum::Error>);
 
     let body = axum::body::Body::from_stream(combined_stream);
 
