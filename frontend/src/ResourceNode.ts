@@ -23,7 +23,7 @@ export interface ResourceNode {
     phase?: string;
     backend_refs?: string[];
     service_type?: string;
-    cluster_ip?: string;
+    cluster_ips?: string[];
     external_ips?: string[];
-    pod_ip?: string;
+    pod_ips?: string[];
 }

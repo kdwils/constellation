@@ -14,13 +14,13 @@ interface ServiceBoxProps {
     portMappings?: string[];
     isTargetedByRoute?: boolean;
     serviceType?: string;
-    clusterIp?: string;
+    clusterIps?: string[];
     externalIps?: string[];
     childContainerPorts?: ContainerPortInfo[];
 }
 
-export function ServiceBox({ name, selectors, portMappings, isTargetedByRoute, serviceType, clusterIp, externalIps, childContainerPorts }: ServiceBoxProps) {
-    const hasMetadata = (selectors && Object.keys(selectors).length > 0) || (portMappings && portMappings.length > 0) || serviceType || clusterIp || (externalIps && externalIps.length > 0);
+export function ServiceBox({ name, selectors, portMappings, isTargetedByRoute, serviceType, clusterIps, externalIps, childContainerPorts }: ServiceBoxProps) {
+    const hasMetadata = (selectors && Object.keys(selectors).length > 0) || (portMappings && portMappings.length > 0) || serviceType || (clusterIps && clusterIps.length > 0) || (externalIps && externalIps.length > 0);
 
     return (
         <ResourceBox borderColor={isTargetedByRoute ? "border-amber-400 border-2" : "border-amber-500"} marginLeft="ml-8">
@@ -35,8 +35,8 @@ export function ServiceBox({ name, selectors, portMappings, isTargetedByRoute, s
                                 <PortMappingList portMappings={portMappings} childContainerPorts={childContainerPorts} />
                             </div>
                         )}
-                        {clusterIp && <MetadataItem label="cluster-ip" value={clusterIp} />}
-                        {externalIps && externalIps.length > 0 && <MetadataItem label="external-ip" value={externalIps} />}
+                        {clusterIps && clusterIps.length > 0 && <MetadataItem label="cluster-ips" value={clusterIps} />}
+                        {externalIps && externalIps.length > 0 && <MetadataItem label="external-ips" value={externalIps} />}
                     </CompactMetadataRow>
                     
                     {selectors && Object.keys(selectors).length > 0 && (

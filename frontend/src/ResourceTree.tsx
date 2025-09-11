@@ -109,7 +109,7 @@ function ResourceNodeItem({ node, level = 0, serviceSelectors, targetPorts, targ
         
         return (
             <div className="space-y-2">
-                <ServiceBox name={node.name} selectors={node.selectors} portMappings={node.port_mappings} isTargetedByRoute={isTargetedByRoute} serviceType={node.service_type} clusterIp={node.cluster_ip} externalIps={node.external_ips} childContainerPorts={childContainerPorts} />
+                <ServiceBox name={node.name} selectors={node.selectors} portMappings={node.port_mappings} isTargetedByRoute={isTargetedByRoute} serviceType={node.service_type} clusterIps={node.cluster_ips} externalIps={node.external_ips} childContainerPorts={childContainerPorts} />
                 {node.relatives && node.relatives.map((childNode) => (
                     <ResourceNodeItem key={childNode.name} node={childNode} level={level + 1} serviceSelectors={node.selectors} targetPorts={node.target_ports} targetPortNames={node.target_port_names} backendRefs={backendRefs} />
                 ))}
@@ -128,7 +128,7 @@ function ResourceNodeItem({ node, level = 0, serviceSelectors, targetPorts, targ
                     targetPorts={targetPorts}
                     targetPortNames={targetPortNames}
                     phase={node.phase} 
-                    podIp={node.pod_ip} 
+                    podIps={node.pod_ips} 
                 />
                 {node.relatives && node.relatives.map((childNode) => (
                     <ResourceNodeItem key={childNode.name} node={childNode} level={level + 1} serviceSelectors={serviceSelectors} targetPorts={targetPorts} targetPortNames={targetPortNames} backendRefs={backendRefs} />
