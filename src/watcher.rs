@@ -85,11 +85,11 @@ pub struct ResourceMetadata {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub service_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub cluster_ip: Option<String>,
+    pub cluster_ips: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub external_ips: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub pod_ip: Option<String>,
+    pub pod_ips: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub container_ports: Option<Vec<ContainerPortInfo>>,
 }
@@ -133,6 +133,10 @@ pub async fn run(state: State) {
     let client = Client::try_default()
         .await
         .expect("failed to create kubernetes client");
+    run_with_client(state, client).await;
+}
+
+pub async fn run_with_client(state: State, client: Client) {
 
     let config = watcher::Config::default();
 
@@ -238,9 +242,9 @@ fn extract_resource_metadata(
                 phase: None,
                 backend_refs,
                 service_type: None,
-                cluster_ip: None,
+                cluster_ips: None,
                 external_ips: None,
-                pod_ip: None,
+                pod_ips: None,
                 container_ports: None,
             }
         }
@@ -252,7 +256,7 @@ fn extract_resource_metadata(
                 target_ports,
                 target_port_names,
                 service_type,
-                cluster_ip,
+                cluster_ips,
                 external_ips,
             ) = match spec {
                 Some(ResourceSpec::Service(spec)) => {
@@ -272,7 +276,25 @@ fn extract_resource_metadata(
                         .unwrap_or((None, None, None, None));
 
                     let service_type = spec.type_.clone();
-                    let cluster_ip = spec.cluster_ip.clone();
+
+                    let mut cluster_ips = Vec::new();
+                    if let Some(ip) = &spec.cluster_ip {
+                        if !ip.is_empty() && ip != "None" {
+                            cluster_ips.push(ip.clone());
+                        }
+                    }
+                    if let Some(ips) = &spec.cluster_ips {
+                        for ip in ips {
+                            if !ip.is_empty() && ip != "None" && !cluster_ips.contains(ip) {
+                                cluster_ips.push(ip.clone());
+                            }
+                        }
+                    }
+                    let cluster_ips = match cluster_ips.is_empty() {
+                        true => None,
+                        false => Some(cluster_ips),
+                    };
+
                     let external_ips = spec.external_ips.clone().filter(|ips| !ips.is_empty());
                     (
                         selectors,
@@ -281,7 +303,7 @@ fn extract_resource_metadata(
                         target_ports,
                         target_port_names,
                         service_type,
-                        cluster_ip,
+                        cluster_ips,
                         external_ips,
                     )
                 }
@@ -298,9 +320,9 @@ fn extract_resource_metadata(
                 phase: None,
                 backend_refs: None,
                 service_type,
-                cluster_ip,
+                cluster_ips,
                 external_ips,
-                pod_ip: None,
+                pod_ips: None,
                 container_ports: None,
             }
         }
@@ -324,15 +346,13 @@ fn extract_resource_metadata(
                         }
                     }
 
-                    let ports = if port_list.is_empty() {
-                        None
-                    } else {
-                        Some(port_list)
+                    let ports = match port_list.is_empty() {
+                        true => None,
+                        false => Some(port_list),
                     };
-                    let container_ports = if container_port_list.is_empty() {
-                        None
-                    } else {
-                        Some(container_port_list)
+                    let container_ports = match container_port_list.is_empty() {
+                        true => None,
+                        false => Some(container_port_list),
                     };
 
                     (ports, container_ports)
@@ -350,9 +370,9 @@ fn extract_resource_metadata(
                 phase: None,
                 backend_refs: None,
                 service_type: None,
-                cluster_ip: None,
+                cluster_ips: None,
                 external_ips: None,
-                pod_ip: None,
+                pod_ips: None,
                 container_ports,
             }
         }
@@ -367,9 +387,9 @@ fn extract_resource_metadata(
             phase: None,
             backend_refs: None,
             service_type: None,
-            cluster_ip: None,
+            cluster_ips: None,
             external_ips: None,
-            pod_ip: None,
+            pod_ips: None,
             container_ports: None,
         },
     }
@@ -382,7 +402,25 @@ fn new_pod(pod: &Pod) -> HierarchyNode {
 
     if let Some(status) = &pod.status {
         resource_metadata.phase = status.phase.clone();
-        resource_metadata.pod_ip = status.pod_ip.clone();
+
+        let mut pod_ips = Vec::new();
+        if let Some(ip) = &status.pod_ip {
+            if !ip.is_empty() {
+                pod_ips.push(ip.clone());
+            }
+        }
+        if let Some(ip_list) = &status.pod_ips {
+            for pod_ip_obj in ip_list {
+                let ip = &pod_ip_obj.ip;
+                if !ip.is_empty() && !pod_ips.contains(ip) {
+                    pod_ips.push(ip.clone());
+                }
+            }
+        }
+        resource_metadata.pod_ips = match pod_ips.is_empty() {
+            true => None,
+            false => Some(pod_ips),
+        };
     }
 
     HierarchyNode {
@@ -705,23 +743,64 @@ fn update_httproute_relationships(
     }
 }
 
-fn add_pod(node: &mut HierarchyNode, pod: &v1::Pod, service_name: &str, service_ns: Option<&str>) {
-    if node.kind == ResourceKind::Service
-        && node.name == service_name
-        && node.metadata.namespace.as_deref() == service_ns
-        && !node.relatives.iter().any(|p| {
-            p.kind == ResourceKind::Pod
-                && p.name == pod.metadata.name.as_deref().unwrap_or_default()
-                && p.metadata.namespace.as_deref() == pod.metadata.namespace.as_deref()
-        })
-    {
-        node.relatives.push(new_pod(pod));
+fn update_pod_relationships(hierarchy: &mut [HierarchyNode], pod: &Pod) {
+    let pod_name = pod.name().unwrap_or_default();
+    let pod_ns = pod.metadata.namespace.as_deref();
+
+    for node in hierarchy.iter_mut() {
+        remove_pod_node(node, pod_name.as_ref(), pod_ns);
+    }
+
+    let pod_labels = pod.labels();
+    for namespace_node in hierarchy.iter_mut() {
+        if namespace_node.kind == ResourceKind::Namespace
+            && namespace_node.metadata.name.as_deref() == pod_ns
+        {
+            let mut pod_added_to_service = false;
+
+            add_pod_to_matching_services(
+                namespace_node,
+                pod,
+                pod_labels,
+                &mut pod_added_to_service,
+            );
+
+            if !pod_added_to_service {
+                namespace_node.relatives.push(new_pod(pod));
+            }
+            break;
+        }
+    }
+}
+
+fn add_pod_to_matching_services(
+    node: &mut HierarchyNode,
+    pod: &Pod,
+    pod_labels: &BTreeMap<String, String>,
+    pod_added: &mut bool,
+) {
+    if node.kind == ResourceKind::Service {
+        if let Some(ResourceSpec::Service(service_spec)) = &node.spec {
+            let service_ns = node.metadata.namespace.as_deref();
+            let pod_ns = pod.metadata.namespace.as_deref();
+
+            if service_ns == pod_ns
+                && selectors_match(
+                    &service_spec.selector.clone().unwrap_or_default(),
+                    pod_labels,
+                )
+            {
+                node.relatives.push(new_pod(pod));
+                *pod_added = true;
+            }
+        }
     }
 
     for child in node.relatives.iter_mut() {
-        add_pod(child, pod, service_name, service_ns);
+        add_pod_to_matching_services(child, pod, pod_labels, pod_added);
     }
 }
+
 
 async fn build_initial_relationships(ctx: Context) {
     println!("Building initial relationships between services and pods...");
@@ -934,29 +1013,8 @@ where
                         pod.metadata.name.clone().unwrap_or_default()
                     );
 
-                    let pod_ns = pod.metadata.namespace.as_deref();
-                    for service in ctx.service_store.state().iter() {
-                        if let Some(spec) = &service.spec {
-                            let service_ns = service.metadata.namespace.as_deref();
-                            if service_ns != pod_ns {
-                                continue;
-                            }
-
-                            if !selectors_match(
-                                &spec.selector.clone().unwrap_or_default(),
-                                pod.labels(),
-                            ) {
-                                continue;
-                            }
-
-                            let service_name = service.metadata.name.as_deref().unwrap_or_default();
-
-                            let mut nodes = ctx.state.hierarchy.write().await;
-                            for root in nodes.iter_mut() {
-                                add_pod(root, &pod, service_name, service_ns);
-                            }
-                        }
-                    }
+                    let mut hierarchy = ctx.state.hierarchy.write().await;
+                    update_pod_relationships(&mut hierarchy, &pod);
                 }
                 watcher::Event::Delete(pod) => {
                     info!(
@@ -1272,9 +1330,9 @@ mod tests {
                 phase: None,
                 backend_refs: None,
                 service_type: None,
-                cluster_ip: None,
+                cluster_ips: None,
                 external_ips: None,
-                pod_ip: None,
+                pod_ips: None,
                 container_ports: None,
             },
         }
@@ -1657,6 +1715,25 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_port_info_named_port_with_numeric_target() {
+        use k8s_openapi::apimachinery::pkg::util::intstr::IntOrString;
+
+        let ports = vec![ServicePort {
+            name: Some("http".to_string()),
+            port: 80,
+            target_port: Some(IntOrString::Int(8989)),
+            ..Default::default()
+        }];
+
+        let port_info = extract_port_info(&ports);
+
+        assert_eq!(port_info.service_ports, vec![80]);
+        assert_eq!(port_info.port_mappings, vec!["80→8989"]);
+        assert_eq!(port_info.target_ports, vec![8989]);
+        assert_eq!(port_info.target_port_names, Vec::<String>::new());
+    }
+
+    #[test]
     fn test_extract_port_info_mixed_ports() {
         use k8s_openapi::apimachinery::pkg::util::intstr::IntOrString;
 
@@ -1744,7 +1821,10 @@ mod tests {
             resource_metadata.service_type,
             Some("ClusterIP".to_string())
         );
-        assert_eq!(resource_metadata.cluster_ip, Some("10.1.2.3".to_string()));
+        assert_eq!(
+            resource_metadata.cluster_ips,
+            Some(vec!["10.1.2.3".to_string()])
+        );
     }
 
     #[test]

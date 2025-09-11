@@ -41,6 +41,9 @@ jobs:
       - name: Run tests
         run: cargo test
 
+      - name: Run functional tests
+        run: cargo test --features functional-tests
+
       - name: Build Rust project
         run: cargo build --release
 
