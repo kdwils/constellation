@@ -2,7 +2,7 @@ use crate::functional::{TestCluster, TestResources};
 use serde_json::Value;
 use tokio::time::{Duration, sleep};
 
-use constellation::server::ConstellationServer;
+use constellation::server::Server;
 
 #[cfg(feature = "functional-tests")]
 #[tokio::test]
@@ -12,8 +12,7 @@ async fn test_comprehensive_resource_lifecycle() -> Result<(), Box<dyn std::erro
 
     resources.create_namespace().await?;
 
-    let server =
-        ConstellationServer::new_with_client("127.0.0.1:0", cluster.client.clone()).await?;
+    let server = Server::new_with_client("127.0.0.1:0", cluster.client.clone()).await?;
     let server_url = format!("http://{}", server.addr);
     let _server_handle = tokio::spawn(async move { server.serve().await });
 

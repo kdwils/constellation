@@ -175,7 +175,6 @@ pub async fn run(state: State) {
 }
 
 pub async fn run_with_client(state: State, client: Client) {
-    println!("run_with_client starting...");
     let config = watcher::Config::default();
 
     let pod_api: Api<v1::Pod> = Api::all(client.clone());
@@ -205,7 +204,7 @@ pub async fn run_with_client(state: State, client: Client) {
         .await
     {
         Ok(_) => {
-            println!("Gateway API HTTPRoute CRDs detected, enabling HTTPRoute support");
+            info!("Gateway API HTTPRoute CRDs detected, enabling HTTPRoute support");
             let httproute_api: Api<HTTPRoute> = Api::all(client.clone());
             let (httproute_store, httproute_writer) = reflector::store::<HTTPRoute>();
             let httproute_rf = reflector::reflector(
@@ -215,7 +214,7 @@ pub async fn run_with_client(state: State, client: Client) {
             Some((httproute_store, Box::pin(httproute_rf)))
         }
         Err(_) => {
-            println!("Gateway API HTTPRoute CRDs not found, running without HTTPRoute support");
+            info!("Gateway API HTTPRoute CRDs not found, running without HTTPRoute support");
             None
         }
     };
@@ -245,22 +244,15 @@ pub async fn run_with_client(state: State, client: Client) {
         tokio::spawn(httproute_watcher(ctx.clone(), httproute_stream));
     }
 
-    println!("waiting for stores...");
     ctx.pod_store.wait_until_ready().await.unwrap();
-    println!("pod store ready...");
     ctx.service_store.wait_until_ready().await.unwrap();
-    println!("service store ready...");
     ctx.namespace_store.wait_until_ready().await.unwrap();
-    println!("namespace store ready...");
 
     if let Some(httproute_store) = &ctx.httproute_store {
         httproute_store.wait_until_ready().await.unwrap();
-        println!("httproute store ready...");
     }
 
-    println!("building initial relationships...");
     build_initial_relationships(ctx.clone()).await;
-    println!("all done")
 }
 
 impl ResourceMetadata {
@@ -536,13 +528,13 @@ fn extract_port_info(ports: &[ServicePort]) -> ServicePortInfo {
 }
 
 fn extract_load_balancer_ips(service: &Service) -> Vec<String> {
-    println!(
+    info!(
         "Checking service {} for LoadBalancer IPs",
         service.name().unwrap_or_default()
     );
 
     let Some(status) = &service.status else {
-        println!(
+        info!(
             "No status for service {}",
             service.name().unwrap_or_default()
         );
@@ -550,7 +542,7 @@ fn extract_load_balancer_ips(service: &Service) -> Vec<String> {
     };
 
     let Some(load_balancer) = &status.load_balancer else {
-        println!(
+        info!(
             "No load_balancer for service {}",
             service.name().unwrap_or_default()
         );
@@ -558,7 +550,7 @@ fn extract_load_balancer_ips(service: &Service) -> Vec<String> {
     };
 
     let Some(ingress_list) = &load_balancer.ingress else {
-        println!(
+        info!(
             "No ingress list for service {}",
             service.name().unwrap_or_default()
         );
@@ -571,7 +563,7 @@ fn extract_load_balancer_ips(service: &Service) -> Vec<String> {
         .cloned()
         .collect();
 
-    println!(
+    info!(
         "Found {} IPs for service {}: {:?}",
         ips.len(),
         service.name().unwrap_or_default(),
@@ -856,7 +848,7 @@ fn add_pod_to_matching_services(
 }
 
 async fn build_initial_relationships(ctx: Context) {
-    println!("Building initial relationships between services and pods...");
+    info!("Building initial relationships between services and pods...");
     let namespace_snapshot = ctx.namespace_store.state();
     let snapshot = ResourceSnapshot::collect(&ctx);
 

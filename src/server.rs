@@ -2,7 +2,7 @@ use crate::{router, watcher, watcher::State};
 use kube::Client;
 use std::net::SocketAddr;
 
-pub struct ConstellationServer {
+pub struct Server {
     pub state: State,
     pub addr: SocketAddr,
     pub listener: tokio::net::TcpListener,
@@ -10,7 +10,7 @@ pub struct ConstellationServer {
     pub client: Client,
 }
 
-impl ConstellationServer {
+impl Server {
     pub async fn new(bind_addr: &str) -> Result<Self, Box<dyn std::error::Error>> {
         let client = Client::try_default().await?;
         Self::new_with_client(bind_addr, client).await
@@ -25,7 +25,7 @@ impl ConstellationServer {
         let listener = tokio::net::TcpListener::bind(bind_addr).await?;
         let addr = listener.local_addr()?;
 
-        Ok(ConstellationServer {
+        Ok(Server {
             state,
             addr,
             listener,
