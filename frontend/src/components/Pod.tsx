@@ -16,11 +16,11 @@ interface PodBoxProps {
     targetPorts?: number[];
     targetPortNames?: string[];
     phase?: string;
-    podIp?: string;
+    podIps?: string[];
 }
 
-export function PodBox({ name, labels, containerPorts, serviceSelectors, targetPorts, targetPortNames, phase, podIp }: PodBoxProps) {
-    const hasMetadata = (labels && Object.keys(labels).length > 0) || (containerPorts && containerPorts.length > 0) || podIp;
+export function PodBox({ name, labels, containerPorts, serviceSelectors, targetPorts, targetPortNames, phase, podIps }: PodBoxProps) {
+    const hasMetadata = (labels && Object.keys(labels).length > 0) || (containerPorts && containerPorts.length > 0) || (podIps && podIps.length > 0);
 
     return (
         <ResourceBox borderColor="border-cyan-500" marginLeft="ml-12">
@@ -34,7 +34,7 @@ export function PodBox({ name, labels, containerPorts, serviceSelectors, targetP
                                 <ContainerPortList containerPorts={containerPorts} highlightedPorts={targetPorts} highlightedPortNames={targetPortNames} />
                             </div>
                         )}
-                        {podIp && <MetadataItem label="ip" value={podIp} />}
+                        {podIps && podIps.length > 0 && <MetadataItem label="ips" value={podIps} />}
                     </CompactMetadataRow>
                     
                     {labels && Object.keys(labels).length > 0 && (
