@@ -9,28 +9,57 @@ export default function Dashboard() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [selectedNamespace, setSelectedNamespace] = useState<string | null>(null);
+    const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
 
     useEffect(() => {
-        fetch("/state")
-            .then(res => {
-                if (!res.ok) {
-                    throw new Error(`HTTP error! status: ${res.status}`);
+        let eventSource: EventSource | null = null;
+        let retryTimeout: ReturnType<typeof setTimeout>;
+
+        const createConnection = () => {
+            eventSource = new EventSource('/state/stream');
+
+            eventSource.onopen = () => {
+                setConnectionStatus('connected');
+                setError(null);
+            };
+
+            eventSource.onmessage = (event) => {
+                try {
+                    const newData = JSON.parse(event.data);
+                    setData(newData);
+                    setLoading(false);
+
+                    // Auto-select first namespace if available and none selected
+                    if (newData.length > 0 && !selectedNamespace) {
+                        setSelectedNamespace(newData[0].name);
+                    }
+                } catch (err) {
+                    console.error('Failed to parse SSE data:', err);
+                    setError('Failed to parse server data');
                 }
-                return res.json();
-            })
-            .then((data) => {
-                setData(data);
-                setLoading(false);
-                // Auto-select first namespace if available
-                if (data.length > 0 && !selectedNamespace) {
-                    setSelectedNamespace(data[0].name);
-                }
-            })
-            .catch((err) => {
-                setError(err.message);
-                setLoading(false);
-            });
-    }, [selectedNamespace]);
+            };
+
+            eventSource.onerror = (err) => {
+                console.error('SSE connection error:', err);
+                setConnectionStatus('disconnected');
+                setError('Connection to server lost. Retrying...');
+                eventSource?.close();
+
+                // Retry connection after delay
+                retryTimeout = setTimeout(() => {
+                    setConnectionStatus('connecting');
+                    createConnection();
+                }, 5000);
+            };
+        };
+
+        createConnection();
+
+        return () => {
+            clearTimeout(retryTimeout);
+            eventSource?.close();
+        };
+    }, []); // Remove selectedNamespace dependency since we get updates via SSE
 
     if (loading) {
         return (
@@ -62,15 +91,29 @@ export default function Dashboard() {
 
     const currentNamespace = selectedNamespace ? data.find(ns => ns.name === selectedNamespace) : null;
 
+    const getConnectionIndicator = () => {
+        switch (connectionStatus) {
+            case 'connected':
+                return <div className="w-2 h-2 bg-green-500 rounded-full" title="Connected" />;
+            case 'connecting':
+                return <div className="w-2 h-2 bg-yellow-500 rounded-full animate-pulse" title="Connecting" />;
+            case 'disconnected':
+                return <div className="w-2 h-2 bg-red-500 rounded-full" title="Disconnected" />;
+        }
+    };
+
     return (
         <div className="min-h-screen bg-gray-50 flex flex-col">
             <header className="bg-white shadow-sm border-b border-gray-200 flex-shrink-0">
                 <div className="w-full px-4 py-4">
                     <div className="flex items-center justify-between">
                         <div>
-                            <h1 className="text-xl font-bold text-gray-800">
-                                Constellation
-                            </h1>
+                            <div className="flex items-center gap-2">
+                                <h1 className="text-xl font-bold text-gray-800">
+                                    Constellation
+                                </h1>
+                                {getConnectionIndicator()}
+                            </div>
                             <p className="text-gray-600 text-sm">
                                 Kubernetes Resource Relationships
                             </p>
@@ -94,7 +137,7 @@ export default function Dashboard() {
             <div className="flex flex-1 overflow-hidden">
                 {data.length > 0 ? (
                     <>
-                        <NamespaceSidebar 
+                        <NamespaceSidebar
                             namespaces={data}
                             selectedNamespace={selectedNamespace}
                             onNamespaceSelect={setSelectedNamespace}
@@ -129,7 +172,7 @@ export default function Dashboard() {
 
 function countTotalResources(node: ResourceNode): number {
     if (!node.relatives) return 0;
-    
+
     let count = node.relatives.length;
     for (const relative of node.relatives) {
         count += countTotalResources(relative);
