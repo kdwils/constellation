@@ -98,11 +98,11 @@ async fn healthz(AxumState(app_state): AxumState<AppState>) -> Response {
             .into_response();
     }
 
-    return (
+    (
         StatusCode::OK,
         Json(HealthCheck {
             message: "ready".into(),
         }),
     )
-        .into_response();
+        .into_response()
 }

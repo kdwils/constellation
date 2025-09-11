@@ -1,6 +1,7 @@
 use crate::{router, watcher, watcher::State};
 use kube::Client;
 use std::net::SocketAddr;
+use tracing::{debug, info};
 
 pub struct Server {
     pub state: State,
@@ -38,9 +39,9 @@ impl Server {
         let watcher_state = self.state.clone();
         let watcher_client = self.client.clone();
         let _watcher_handle = tokio::spawn(async move {
-            println!("Starting watcher...");
+            info!("Starting watcher...");
             watcher::run_with_client(watcher_state, watcher_client).await;
-            println!("Watcher finished");
+            debug!("Watcher finished");
         });
 
         axum::serve(self.listener, self.router).await?;
