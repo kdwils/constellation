@@ -8,7 +8,7 @@ interface ResourceBoxProps {
 
 export function ResourceBox({ children, borderColor, marginLeft }: ResourceBoxProps) {
     return (
-        <div className={`${marginLeft} p-3 bg-white border-l-4 ${borderColor} rounded-r-md shadow-sm`}>
+        <div className={`${marginLeft} p-4 bg-white border ${borderColor} rounded-lg shadow-sm hover:shadow-md transition-shadow duration-200`}>
             {children}
         </div>
     );

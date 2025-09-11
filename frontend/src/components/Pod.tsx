@@ -5,6 +5,7 @@ import { MetadataRow } from "./MetadataRow";
 import { MetadataItem } from "./MetadataItem";
 import { MetadataContainer } from "./MetadataContainer";
 import { CompactMetadataRow } from "./CompactMetadataRow";
+import { MetadataLabel } from "./MetadataLabel";
 import { ContainerPortList } from "./ContainerPortList";
 import type { ContainerPortInfo } from "../ResourceNode";
 
@@ -23,14 +24,14 @@ export function PodBox({ name, labels, containerPorts, serviceSelectors, targetP
     const hasMetadata = (labels && Object.keys(labels).length > 0) || (containerPorts && containerPorts.length > 0) || (podIps && podIps.length > 0);
 
     return (
-        <ResourceBox borderColor="border-cyan-500" marginLeft="ml-12">
+        <ResourceBox borderColor="border-cyan-300" marginLeft="ml-0">
             <ResourceHeader name={name} type="POD" dotColor="bg-cyan-500" phase={phase} />
             {hasMetadata && (
                 <MetadataContainer>
                     <CompactMetadataRow>
                         {containerPorts && containerPorts.length > 0 && (
                             <div className="flex items-center gap-1">
-                                <span className="text-slate-500">ports:</span>
+                                <MetadataLabel>ports</MetadataLabel>
                                 <ContainerPortList containerPorts={containerPorts} highlightedPorts={targetPorts} highlightedPortNames={targetPortNames} />
                             </div>
                         )}

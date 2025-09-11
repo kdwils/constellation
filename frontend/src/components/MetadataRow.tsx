@@ -8,7 +8,7 @@ interface MetadataRowProps {
 
 export function MetadataRow({ icon, children, alignItems = "center" }: MetadataRowProps) {
     const alignmentClass = alignItems === "start" ? "items-start" : "items-center";
-    const iconClass = alignItems === "start" ? "mt-0.5" : "";
+    const iconClass = alignItems === "start" ? "mt-1" : "";
     
     return (
         <div className={`flex ${alignmentClass} space-x-1`}>

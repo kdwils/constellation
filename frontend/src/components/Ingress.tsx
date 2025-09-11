@@ -7,7 +7,7 @@ interface IngressProps {
 
 export function IngressBox({ name }: IngressProps) {
     return (
-        <ResourceBox borderColor="border-emerald-500" marginLeft="ml-4">
+        <ResourceBox borderColor="border-emerald-300" marginLeft="ml-0">
             <ResourceHeader name={name} type="INGRESS" dotColor="bg-emerald-500" />
         </ResourceBox>
     );
