@@ -1,4 +1,4 @@
-import { LabelBadge } from "./LabelBadge";
+import { HighlightableList } from "./HighlightableList";
 import type { ContainerPortInfo } from "../ResourceNode";
 
 interface ContainerPortListProps {
@@ -9,21 +9,17 @@ interface ContainerPortListProps {
 
 export function ContainerPortList({ containerPorts, highlightedPorts = [], highlightedPortNames = [] }: ContainerPortListProps) {
     return (
-        <div className="flex flex-wrap gap-x-2 gap-y-1">
-            {containerPorts.map((portInfo, index) => {
-                const isHighlighted = highlightedPorts.includes(portInfo.port) || 
-                    (portInfo.name ? highlightedPortNames.includes(portInfo.name) : false);
-                    
-                const displayText = portInfo.name 
+        <HighlightableList
+            items={containerPorts}
+            getDisplayText={(portInfo) => 
+                portInfo.name 
                     ? `${portInfo.port} (${portInfo.name})`
-                    : portInfo.port.toString();
-                
-                return (
-                    <LabelBadge key={index} highlighted={isHighlighted}>
-                        {displayText}
-                    </LabelBadge>
-                );
-            })}
-        </div>
+                    : portInfo.port.toString()
+            }
+            isHighlighted={(portInfo) => 
+                highlightedPorts.includes(portInfo.port) || 
+                (portInfo.name ? highlightedPortNames.includes(portInfo.name) : false)
+            }
+        />
     );
 }

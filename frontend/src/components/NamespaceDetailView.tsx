@@ -134,12 +134,23 @@ function renderResourceTree(nodes: ResourceNode[], level: number = 0, serviceSel
                     </ResourceNodeWrapper>
                 );
 
-            case "HTTPRoute":
+            case "HTTPRoute": {
+                // Get the names of child services that match backend_refs
+                const referencedServiceNames: string[] = [];
+                if (node.backend_refs && node.relatives) {
+                    node.backend_refs.forEach(ref => {
+                        if (node.relatives!.some(relative => relative.kind === "Service" && relative.name === ref)) {
+                            referencedServiceNames.push(ref);
+                        }
+                    });
+                }
+                
                 return (
                     <ResourceNodeWrapper key={key} node={node} level={level} serviceSelectors={serviceSelectors} targetPorts={targetPorts} targetPortNames={targetPortNames} backendRefs={backendRefs}>
-                        <HttpRouteBox name={node.name} hostnames={node.hostnames} backend_refs={node.backend_refs} />
+                        <HttpRouteBox name={node.name} hostnames={node.hostnames} backend_refs={node.backend_refs} referencedServiceNames={referencedServiceNames} />
                     </ResourceNodeWrapper>
                 );
+            }
 
             case "Service": {
                 const currentBackendRefs = collectBackendRefs(nodes);
