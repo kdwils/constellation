@@ -13,22 +13,22 @@ export default function Dashboard() {
 
     useEffect(() => {
         let eventSource: EventSource | null = null;
-        let retryTimeout: NodeJS.Timeout;
+        let retryTimeout: ReturnType<typeof setTimeout>;
 
         const createConnection = () => {
             eventSource = new EventSource('/state/stream');
-            
+
             eventSource.onopen = () => {
                 setConnectionStatus('connected');
                 setError(null);
             };
-            
+
             eventSource.onmessage = (event) => {
                 try {
                     const newData = JSON.parse(event.data);
                     setData(newData);
                     setLoading(false);
-                    
+
                     // Auto-select first namespace if available and none selected
                     if (newData.length > 0 && !selectedNamespace) {
                         setSelectedNamespace(newData[0].name);
@@ -38,13 +38,13 @@ export default function Dashboard() {
                     setError('Failed to parse server data');
                 }
             };
-            
+
             eventSource.onerror = (err) => {
                 console.error('SSE connection error:', err);
                 setConnectionStatus('disconnected');
                 setError('Connection to server lost. Retrying...');
                 eventSource?.close();
-                
+
                 // Retry connection after delay
                 retryTimeout = setTimeout(() => {
                     setConnectionStatus('connecting');
@@ -137,7 +137,7 @@ export default function Dashboard() {
             <div className="flex flex-1 overflow-hidden">
                 {data.length > 0 ? (
                     <>
-                        <NamespaceSidebar 
+                        <NamespaceSidebar
                             namespaces={data}
                             selectedNamespace={selectedNamespace}
                             onNamespaceSelect={setSelectedNamespace}
@@ -172,7 +172,7 @@ export default function Dashboard() {
 
 function countTotalResources(node: ResourceNode): number {
     if (!node.relatives) return 0;
-    
+
     let count = node.relatives.length;
     for (const relative of node.relatives) {
         count += countTotalResources(relative);
