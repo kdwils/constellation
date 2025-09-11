@@ -1,7 +1,7 @@
 // mod controller;
 pub mod router;
-pub mod watcher;
 pub mod server;
+pub mod watcher;
 
 use server::ConstellationServer;
 
@@ -12,6 +12,6 @@ async fn main() {
     let server = ConstellationServer::new("0.0.0.0:8080")
         .await
         .expect("Failed to start server");
-        
+
     server.run_until_shutdown().await.expect("Server error");
 }

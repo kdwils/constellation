@@ -137,7 +137,6 @@ pub async fn run(state: State) {
 }
 
 pub async fn run_with_client(state: State, client: Client) {
-
     let config = watcher::Config::default();
 
     let pod_api: Api<v1::Pod> = Api::all(client.clone());
@@ -278,10 +277,11 @@ fn extract_resource_metadata(
                     let service_type = spec.type_.clone();
 
                     let mut cluster_ips = Vec::new();
-                    if let Some(ip) = &spec.cluster_ip {
-                        if !ip.is_empty() && ip != "None" {
-                            cluster_ips.push(ip.clone());
-                        }
+                    if let Some(ip) = &spec.cluster_ip
+                        && !ip.is_empty()
+                        && ip != "None"
+                    {
+                        cluster_ips.push(ip.clone());
                     }
                     if let Some(ips) = &spec.cluster_ips {
                         for ip in ips {
@@ -404,10 +404,10 @@ fn new_pod(pod: &Pod) -> HierarchyNode {
         resource_metadata.phase = status.phase.clone();
 
         let mut pod_ips = Vec::new();
-        if let Some(ip) = &status.pod_ip {
-            if !ip.is_empty() {
-                pod_ips.push(ip.clone());
-            }
+        if let Some(ip) = &status.pod_ip
+            && !ip.is_empty()
+        {
+            pod_ips.push(ip.clone());
         }
         if let Some(ip_list) = &status.pod_ips {
             for pod_ip_obj in ip_list {
@@ -779,20 +779,20 @@ fn add_pod_to_matching_services(
     pod_labels: &BTreeMap<String, String>,
     pod_added: &mut bool,
 ) {
-    if node.kind == ResourceKind::Service {
-        if let Some(ResourceSpec::Service(service_spec)) = &node.spec {
-            let service_ns = node.metadata.namespace.as_deref();
-            let pod_ns = pod.metadata.namespace.as_deref();
+    if node.kind == ResourceKind::Service
+        && let Some(ResourceSpec::Service(service_spec)) = &node.spec
+    {
+        let service_ns = node.metadata.namespace.as_deref();
+        let pod_ns = pod.metadata.namespace.as_deref();
 
-            if service_ns == pod_ns
-                && selectors_match(
-                    &service_spec.selector.clone().unwrap_or_default(),
-                    pod_labels,
-                )
-            {
-                node.relatives.push(new_pod(pod));
-                *pod_added = true;
-            }
+        if service_ns == pod_ns
+            && selectors_match(
+                &service_spec.selector.clone().unwrap_or_default(),
+                pod_labels,
+            )
+        {
+            node.relatives.push(new_pod(pod));
+            *pod_added = true;
         }
     }
 
@@ -800,7 +800,6 @@ fn add_pod_to_matching_services(
         add_pod_to_matching_services(child, pod, pod_labels, pod_added);
     }
 }
-
 
 async fn build_initial_relationships(ctx: Context) {
     println!("Building initial relationships between services and pods...");
