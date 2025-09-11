@@ -11,7 +11,7 @@ use kube::{
 };
 
 use std::{collections::BTreeMap, collections::HashSet, sync::Arc};
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, broadcast};
 
 use gateway_api::httproutes::{HTTPRoute, HTTPRouteSpec};
 use k8s_openapi::api::core::v1::{Namespace, Pod, Service, ServicePort};
@@ -110,12 +110,15 @@ pub struct HierarchyNode {
 #[derive(Clone)]
 pub struct State {
     pub hierarchy: Arc<RwLock<Vec<HierarchyNode>>>,
+    pub state_updates: broadcast::Sender<Vec<HierarchyNode>>,
 }
 
 impl Default for State {
     fn default() -> Self {
+        let (tx, _rx) = broadcast::channel(100);
         Self {
             hierarchy: Arc::new(RwLock::new(Vec::new())),
+            state_updates: tx,
         }
     }
 }
@@ -253,6 +256,14 @@ pub async fn run_with_client(state: State, client: Client) {
     }
 
     build_initial_relationships(ctx.clone()).await;
+}
+
+async fn broadcast_state_update(ctx: &Context) {
+    let hierarchy = ctx.state.hierarchy.read().await;
+    let state = hierarchy.clone();
+    drop(hierarchy);
+    
+    let _ = ctx.state.state_updates.send(state);
 }
 
 impl ResourceMetadata {
@@ -1068,6 +1079,9 @@ where
 
                     let mut hierarchy = ctx.state.hierarchy.write().await;
                     update_pod_relationships(&mut hierarchy, &pod);
+                    drop(hierarchy);
+                    
+                    broadcast_state_update(&ctx).await;
                 }
                 watcher::Event::Delete(pod) => {
                     info!(
@@ -1082,6 +1096,9 @@ where
                     for root in nodes.iter_mut() {
                         remove_node_by_kind(root, ResourceKind::Pod, pod_name, pod_ns);
                     }
+                    drop(nodes);
+                    
+                    broadcast_state_update(&ctx).await;
                 }
                 _ => {}
             },
@@ -1110,6 +1127,9 @@ where
                     let snapshot = ResourceSnapshot::collect(&ctx);
                     let mut hierarchy = ctx.state.hierarchy.write().await;
                     update_service_relationships(&mut hierarchy, &service, &snapshot.pods);
+                    drop(hierarchy);
+                    
+                    broadcast_state_update(&ctx).await;
                 }
                 watcher::Event::Delete(service) => {
                     info!(
@@ -1124,6 +1144,9 @@ where
                     for node in hierarchy.iter_mut() {
                         remove_node_by_kind(node, ResourceKind::Service, service_name, service_ns);
                     }
+                    drop(hierarchy);
+                    
+                    broadcast_state_update(&ctx).await;
                 }
                 _ => {}
             },

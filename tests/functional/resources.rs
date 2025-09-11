@@ -1,8 +1,7 @@
 use k8s_openapi::api::{
     apps::v1::{Deployment, DeploymentSpec},
     core::v1::{
-        Container, ContainerPort, Namespace, Pod, PodSpec, PodTemplateSpec, Service, ServicePort,
-        ServiceSpec,
+        Container, Namespace, Pod, PodSpec, PodTemplateSpec, Service, ServicePort, ServiceSpec,
     },
 };
 use k8s_openapi::apimachinery::pkg::{
