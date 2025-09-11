@@ -78,7 +78,7 @@ export function NamespaceSidebar({ namespaces, selectedNamespace, onNamespaceSel
                                     </h3>
                                     {stats.hasExternalRoutes && (
                                         <div className="flex-shrink-0">
-                                            <div className="w-2 h-2 bg-green-400 rounded-full" title="Has external routes"></div>
+                                            <span className="text-blue-600 text-sm" title="Has external routes">🌐</span>
                                         </div>
                                     )}
                                 </div>
