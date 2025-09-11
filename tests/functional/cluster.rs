@@ -1,47 +1,50 @@
 use kube::{Client, Config};
-use testcontainers::{ContainerAsync, ImageExt, runners::AsyncRunner};
+use testcontainers::runners::AsyncRunner;
+use testcontainers::{ContainerAsync, ImageExt};
 use testcontainers_modules::k3s::K3s;
 
 pub struct TestCluster {
     pub container: ContainerAsync<K3s>,
     pub client: Client,
-    pub kubeconfig: String,
 }
 
 impl TestCluster {
     pub async fn new() -> Result<Self, Box<dyn std::error::Error>> {
-        let container = K3s::default().start().await?;
+        let temp_dir = std::env::temp_dir().join(format!("k3s-test-{}", std::process::id()));
+        std::fs::create_dir_all(&temp_dir)?;
+
+        // Copy k3s  file
+        let k3s_config_source = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/k3s-config.yaml"
+        );
+        std::fs::copy(k3s_config_source, temp_dir.join("config.yaml"))?;
+
+        let container = K3s::default()
+            .with_conf_mount(&temp_dir)
+            .with_privileged(true)
+            .start()
+            .await?;
 
         let kubeconfig_yaml = container.image().read_kube_config()?;
-        let kubeconfig: kube::config::Kubeconfig = serde_yaml::from_str(&kubeconfig_yaml)?;
+        let mut kubeconfig: kube::config::Kubeconfig = serde_yaml::from_str(&kubeconfig_yaml)?;
+
+        let kube_port = container.get_host_port_ipv4(6443).await?;
+        let server_url = format!("https://127.0.0.1:{}", kube_port);
+
+        if let Some(cluster) = kubeconfig.clusters.first_mut() {
+            cluster.cluster.as_mut().unwrap().server = Some(server_url);
+        }
+
         let client = Client::try_from(
             Config::from_custom_kubeconfig(kubeconfig, &Default::default()).await?,
         )?;
 
-        Ok(TestCluster {
-            container,
-            client,
-            kubeconfig: kubeconfig_yaml,
-        })
+        Ok(TestCluster { container, client })
     }
 
-    pub async fn wait_for_ready(&self) -> Result<(), Box<dyn std::error::Error>> {
-        use k8s_openapi::api::core::v1::Node;
-        use kube::api::Api;
-
-        let nodes: Api<Node> = Api::all(self.client.clone());
-
-        for _ in 0..60 {
-            match nodes.list(&Default::default()).await {
-                Ok(node_list) if !node_list.items.is_empty() => {
-                    return Ok(());
-                }
-                _ => {
-                    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-                }
-            }
-        }
-
-        Err("Cluster did not become ready in time".into())
+    pub async fn cleanup(&self) -> Result<(), Box<dyn std::error::Error>> {
+        self.container.stop().await?;
+        Ok(())
     }
 }

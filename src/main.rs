@@ -13,5 +13,5 @@ async fn main() {
         .await
         .expect("Failed to start server");
 
-    server.run_until_shutdown().await.expect("Server error");
+    server.serve().await.expect("Server error");
 }

@@ -74,11 +74,8 @@ impl TestResources {
                     spec: Some(PodSpec {
                         containers: vec![Container {
                             name: "app".to_string(),
-                            image: Some("nginx:alpine".to_string()),
-                            ports: Some(vec![ContainerPort {
-                                container_port: 80,
-                                ..Default::default()
-                            }]),
+                            image: Some("busybox:latest".to_string()),
+                            command: Some(vec!["sleep".to_string(), "3600".to_string()]),
                             ..Default::default()
                         }],
                         ..Default::default()

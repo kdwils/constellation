@@ -6,127 +6,90 @@ use constellation::server::ConstellationServer;
 
 #[cfg(feature = "functional-tests")]
 #[tokio::test]
-async fn test_simple_pod_creation_shows_in_state() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_comprehensive_resource_lifecycle() -> Result<(), Box<dyn std::error::Error>> {
     let cluster = TestCluster::new().await?;
-    cluster.wait_for_ready().await?;
-
     let resources = TestResources::new(cluster.client.clone(), "test-ns");
+
     resources.create_namespace().await?;
 
     let server =
         ConstellationServer::new_with_client("127.0.0.1:0", cluster.client.clone()).await?;
-    let server_url = server.base_url();
+    let server_url = format!("http://{}", server.addr);
+    let _server_handle = tokio::spawn(async move { server.serve().await });
 
-    sleep(Duration::from_secs(3)).await;
+    sleep(Duration::from_secs(6)).await;
 
+    resources
+        .create_test_service("test-service", "test-app")
+        .await?;
     resources.create_test_deployment("test-app", 1).await?;
     resources.wait_for_pods_ready("app=test-app", 1).await?;
 
-    sleep(Duration::from_secs(2)).await;
+    sleep(Duration::from_secs(3)).await;
 
     let response = reqwest::get(&format!("{}/state", server_url)).await?;
-    assert!(response.status().is_success());
+    let state: Value = response.json().await?;
 
-    let state_json: Value = response.json().await?;
+    let hierarchy = state.as_array().unwrap();
 
-    let found_pod = find_pod_in_state(&state_json, "test-app")?;
-    assert!(found_pod, "Pod should appear in constellation state");
+    let namespace = hierarchy
+        .iter()
+        .find(|ns| ns["name"].as_str() == Some("test-ns"))
+        .unwrap();
 
-    let pod_phase = get_pod_phase(&state_json, "test-app")?;
-    assert_eq!(pod_phase, "Running", "Pod should be in Running phase");
+    let relatives = namespace["relatives"].as_array().unwrap();
+    assert_eq!(relatives.len(), 1);
+
+    let service = &relatives[0];
+    assert_eq!(service["kind"].as_str().unwrap(), "Service");
+    assert_eq!(service["name"].as_str().unwrap(), "test-service");
+
+    let pod_relatives = service["relatives"].as_array().unwrap();
+    assert_eq!(pod_relatives.len(), 1);
+
+    let pod = &pod_relatives[0];
+    assert_eq!(pod["kind"].as_str().unwrap(), "Pod");
+    assert!(pod["name"].as_str().unwrap().contains("test-app"));
+    assert_eq!(pod["phase"].as_str().unwrap(), "Running");
+
+    let pods = resources.get_pods("app=test-app").await?;
+    let original_pod_name = pods[0].metadata.name.as_ref().unwrap();
+
+    resources.delete_pod(original_pod_name).await?;
+    resources.wait_for_pods_ready("app=test-app", 1).await?;
+
+    sleep(Duration::from_secs(3)).await;
+
+    let response2 = reqwest::get(&format!("{}/state", server_url)).await?;
+    let final_state: Value = response2.json().await?;
+
+    let final_hierarchy = final_state.as_array().unwrap();
+    let final_namespace = final_hierarchy
+        .iter()
+        .find(|ns| ns["name"].as_str() == Some("test-ns"))
+        .unwrap();
+    let final_relatives = final_namespace["relatives"].as_array().unwrap();
+    assert_eq!(final_relatives.len(), 1);
+
+    let final_service = &final_relatives[0];
+    assert_eq!(final_service["kind"].as_str().unwrap(), "Service");
+    assert_eq!(final_service["name"].as_str().unwrap(), "test-service");
+
+    let final_pod_relatives = final_service["relatives"].as_array().unwrap();
+    assert_eq!(final_pod_relatives.len(), 1);
+
+    let final_pod = &final_pod_relatives[0];
+    assert_eq!(final_pod["kind"].as_str().unwrap(), "Pod");
+    assert!(final_pod["name"].as_str().unwrap().contains("test-app"));
+    assert_eq!(final_pod["phase"].as_str().unwrap(), "Running");
+
+    let final_pod_name = final_pod["name"].as_str().unwrap();
+    assert_ne!(
+        original_pod_name, final_pod_name,
+        "New pod should have different name than deleted pod"
+    );
 
     resources.cleanup().await?;
-    server.shutdown();
-
+    cluster.cleanup().await?;
     Ok(())
-}
-
-fn find_pod_in_state(state: &Value, app_name: &str) -> Result<bool, Box<dyn std::error::Error>> {
-    let hierarchy = state["hierarchy"]
-        .as_array()
-        .ok_or("No hierarchy found in state")?;
-
-    for namespace in hierarchy {
-        if find_pod_in_namespace(namespace, app_name) {
-            return Ok(true);
-        }
-    }
-
-    Ok(false)
-}
-
-fn find_pod_in_namespace(namespace: &Value, app_name: &str) -> bool {
-    let Some(relatives) = namespace["relatives"].as_array() else {
-        return false;
-    };
-
-    for resource in relatives {
-        if is_matching_pod(resource, app_name) {
-            return true;
-        }
-
-        if has_matching_pod_child(resource, app_name) {
-            return true;
-        }
-    }
-
-    false
-}
-
-fn is_matching_pod(resource: &Value, app_name: &str) -> bool {
-    resource["kind"] == "Pod"
-        && resource["name"]
-            .as_str()
-            .map_or(false, |name| name.contains(app_name))
-}
-
-fn has_matching_pod_child(resource: &Value, app_name: &str) -> bool {
-    let Some(pod_relatives) = resource["relatives"].as_array() else {
-        return false;
-    };
-
-    pod_relatives
-        .iter()
-        .any(|pod| is_matching_pod(pod, app_name))
-}
-
-fn get_pod_phase(state: &Value, app_name: &str) -> Result<String, Box<dyn std::error::Error>> {
-    let hierarchy = state["hierarchy"]
-        .as_array()
-        .ok_or("No hierarchy found in state")?;
-
-    for namespace in hierarchy {
-        if let Some(phase) = get_pod_phase_from_namespace(namespace, app_name) {
-            return Ok(phase);
-        }
-    }
-
-    Err("Pod not found in state".into())
-}
-
-fn get_pod_phase_from_namespace(namespace: &Value, app_name: &str) -> Option<String> {
-    let relatives = namespace["relatives"].as_array()?;
-
-    for resource in relatives {
-        if let Some(phase) = get_pod_phase_from_resource(resource, app_name) {
-            return Some(phase);
-        }
-    }
-
-    None
-}
-
-fn get_pod_phase_from_resource(resource: &Value, app_name: &str) -> Option<String> {
-    if is_matching_pod(resource, app_name) {
-        return Some(resource["phase"].as_str().unwrap_or("Unknown").to_string());
-    }
-
-    let pod_relatives = resource["relatives"].as_array()?;
-    for pod in pod_relatives {
-        if is_matching_pod(pod, app_name) {
-            return Some(pod["phase"].as_str().unwrap_or("Unknown").to_string());
-        }
-    }
-
-    None
 }
