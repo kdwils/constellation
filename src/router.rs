@@ -3,7 +3,7 @@ use axum::{
     Router,
     extract::State as AxumState,
     http::StatusCode,
-    response::{Json, Response},
+    response::{IntoResponse, Json, Response},
     routing::get,
 };
 use serde::Serialize;
@@ -81,8 +81,28 @@ async fn state_stream(AxumState(app_state): AxumState<AppState>) -> Response {
         .unwrap()
 }
 
-async fn healthz() -> Json<HealthCheck> {
-    Json(HealthCheck {
-        message: "ok".into(),
-    })
+async fn healthz(AxumState(app_state): AxumState<AppState>) -> Response {
+    use axum::http::StatusCode;
+
+    let hierarchy = app_state.hierarchy.read().await;
+    let ready = !hierarchy.is_empty();
+    drop(hierarchy);
+
+    if !ready {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(HealthCheck {
+                message: "waiting for kubernetes resources".into(),
+            }),
+        )
+            .into_response();
+    }
+
+    return (
+        StatusCode::OK,
+        Json(HealthCheck {
+            message: "ready".into(),
+        }),
+    )
+        .into_response();
 }

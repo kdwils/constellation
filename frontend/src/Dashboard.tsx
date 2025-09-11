@@ -14,8 +14,29 @@ export default function Dashboard() {
     useEffect(() => {
         let eventSource: EventSource | null = null;
         let retryTimeout: ReturnType<typeof setTimeout>;
+        let healthCheckTimeout: ReturnType<typeof setTimeout>;
 
-        const createConnection = () => {
+        const checkHealth = async (): Promise<boolean> => {
+            try {
+                const response = await fetch('/healthz');
+                return response.ok;
+            } catch {
+                return false;
+            }
+        };
+
+        const createConnection = async () => {
+            const isHealthy = await checkHealth();
+            
+            if (!isHealthy) {
+                setError('Server not ready. Waiting for Kubernetes resources...');
+                healthCheckTimeout = setTimeout(() => {
+                    setConnectionStatus('connecting');
+                    createConnection();
+                }, 2000);
+                return;
+            }
+
             eventSource = new EventSource('/state/stream');
 
             eventSource.onopen = () => {
@@ -57,6 +78,7 @@ export default function Dashboard() {
 
         return () => {
             clearTimeout(retryTimeout);
+            clearTimeout(healthCheckTimeout);
             eventSource?.close();
         };
     }, []); // Remove selectedNamespace dependency since we get updates via SSE

@@ -1062,158 +1062,316 @@ pub fn selectors_match(
         .all(|(key, value)| labels.get(key) == Some(value))
 }
 
-pub async fn pod_watcher<S>(ctx: Context, mut pod_stream: S)
+pub async fn pod_watcher<S>(ctx: Context, pod_stream: S)
 where
     S: Stream<Item = Result<watcher::Event<v1::Pod>, WatcherError>> + Unpin,
 {
     info!("pod watcher started, waiting for events...");
 
-    while let Some(event) = pod_stream.next().await {
-        match event {
-            Ok(ev) => match ev {
-                watcher::Event::Apply(pod) => {
-                    info!(
-                        "pod applied: {}",
-                        pod.metadata.name.clone().unwrap_or_default()
-                    );
+    pod_stream
+        .for_each(|event| async {
+            match event {
+                Ok(ev) => match ev {
+                    watcher::Event::Apply(pod) => {
+                        info!(
+                            "pod applied: {}",
+                            pod.metadata.name.clone().unwrap_or_default()
+                        );
 
-                    let mut hierarchy = ctx.state.hierarchy.write().await;
-                    update_pod_relationships(&mut hierarchy, &pod);
-                    drop(hierarchy);
+                        let mut hierarchy = ctx.state.hierarchy.write().await;
+                        update_pod_relationships(&mut hierarchy, &pod);
+                        drop(hierarchy);
 
-                    broadcast_state_update(&ctx).await;
-                }
-                watcher::Event::Delete(pod) => {
-                    info!(
-                        "pod deleted: {}",
-                        pod.metadata.name.clone().unwrap_or_default()
-                    );
-
-                    let pod_name = pod.metadata.name.as_deref().unwrap_or_default();
-                    let pod_ns = pod.metadata.namespace.as_deref();
-
-                    let mut nodes = ctx.state.hierarchy.write().await;
-                    for root in nodes.iter_mut() {
-                        remove_node_by_kind(root, ResourceKind::Pod, pod_name, pod_ns);
+                        broadcast_state_update(&ctx).await;
                     }
-                    drop(nodes);
+                    watcher::Event::Delete(pod) => {
+                        info!(
+                            "pod deleted: {}",
+                            pod.metadata.name.clone().unwrap_or_default()
+                        );
 
-                    broadcast_state_update(&ctx).await;
+                        let pod_name = pod.metadata.name.as_deref().unwrap_or_default();
+                        let pod_ns = pod.metadata.namespace.as_deref();
+
+                        let mut nodes = ctx.state.hierarchy.write().await;
+                        for root in nodes.iter_mut() {
+                            remove_node_by_kind(root, ResourceKind::Pod, pod_name, pod_ns);
+                        }
+                        drop(nodes);
+
+                        broadcast_state_update(&ctx).await;
+                    }
+                    _ => {}
+                },
+                Err(err) => {
+                    error!(
+                        "error from pod stream (stream will auto-recover): {:?}",
+                        err
+                    )
                 }
-                _ => {}
-            },
-            Err(err) => {
-                error!("error from pod stream {:?}", err)
             }
-        }
-    }
+        })
+        .await;
+
+    error!("Pod watcher stream ended unexpectedly");
 }
 
-pub async fn service_watcher<S>(ctx: Context, mut service_stream: S)
+pub async fn service_watcher<S>(ctx: Context, service_stream: S)
 where
     S: Stream<Item = Result<watcher::Event<v1::Service>, WatcherError>> + Unpin,
 {
     info!("service watcher started, waiting for events...");
 
-    while let Some(event) = service_stream.next().await {
-        match event {
-            Ok(ev) => match ev {
-                watcher::Event::Apply(service) => {
-                    info!(
-                        "service applied: {}",
-                        service.metadata.name.clone().unwrap_or_default()
-                    );
+    service_stream
+        .for_each(|event| async {
+            match event {
+                Ok(ev) => match ev {
+                    watcher::Event::Apply(service) => {
+                        info!(
+                            "service applied: {}",
+                            service.metadata.name.clone().unwrap_or_default()
+                        );
 
-                    let snapshot = ResourceSnapshot::collect(&ctx);
-                    let mut hierarchy = ctx.state.hierarchy.write().await;
-                    update_service_relationships(&mut hierarchy, &service, &snapshot.pods);
-                    drop(hierarchy);
+                        let snapshot = ResourceSnapshot::collect(&ctx);
+                        let mut hierarchy = ctx.state.hierarchy.write().await;
+                        update_service_relationships(&mut hierarchy, &service, &snapshot.pods);
+                        drop(hierarchy);
 
-                    broadcast_state_update(&ctx).await;
-                }
-                watcher::Event::Delete(service) => {
-                    info!(
-                        "service deleted: {}",
-                        service.metadata.name.clone().unwrap_or_default()
-                    );
-
-                    let service_name = service.metadata.name.as_deref().unwrap_or_default();
-                    let service_ns = service.metadata.namespace.as_deref();
-
-                    let mut hierarchy = ctx.state.hierarchy.write().await;
-                    for node in hierarchy.iter_mut() {
-                        remove_node_by_kind(node, ResourceKind::Service, service_name, service_ns);
+                        broadcast_state_update(&ctx).await;
                     }
-                    drop(hierarchy);
+                    watcher::Event::Delete(service) => {
+                        info!(
+                            "service deleted: {}",
+                            service.metadata.name.clone().unwrap_or_default()
+                        );
 
-                    broadcast_state_update(&ctx).await;
+                        let service_name = service.metadata.name.as_deref().unwrap_or_default();
+                        let service_ns = service.metadata.namespace.as_deref();
+
+                        let mut hierarchy = ctx.state.hierarchy.write().await;
+                        for node in hierarchy.iter_mut() {
+                            remove_node_by_kind(
+                                node,
+                                ResourceKind::Service,
+                                service_name,
+                                service_ns,
+                            );
+                        }
+                        drop(hierarchy);
+
+                        broadcast_state_update(&ctx).await;
+                    }
+                    _ => {}
+                },
+                Err(err) => {
+                    error!(
+                        "error from service stream (stream will auto-recover): {:?}",
+                        err
+                    );
                 }
-                _ => {}
-            },
-            Err(err) => {
-                error!("error from service stream {:?}", err);
             }
-        }
-    }
+        })
+        .await;
+
+    error!("Service watcher stream ended unexpectedly");
 }
 
-pub async fn namespace_watcher<S>(ctx: Context, mut namespace_stream: S)
+pub async fn namespace_watcher<S>(ctx: Context, namespace_stream: S)
 where
     S: Stream<Item = Result<watcher::Event<Namespace>, WatcherError>> + Unpin,
 {
     info!("namespace watcher started, waiting for events...");
 
-    while let Some(event) = namespace_stream.next().await {
-        match event {
-            Ok(ev) => match ev {
-                watcher::Event::Apply(namespace) => {
-                    info!(
-                        "namespace applied: {}",
-                        namespace.metadata.name.clone().unwrap_or_default()
-                    );
+    namespace_stream
+        .for_each(|event| async {
+            match event {
+                Ok(ev) => match ev {
+                    watcher::Event::Apply(namespace) => {
+                        info!(
+                            "namespace applied: {}",
+                            namespace.metadata.name.clone().unwrap_or_default()
+                        );
 
-                    let namespace_name = namespace.name().unwrap_or_default();
-                    let mut hierarchy = ctx.state.hierarchy.write().await;
+                        let namespace_name = namespace.name().unwrap_or_default();
+                        let mut hierarchy = ctx.state.hierarchy.write().await;
 
-                    if !hierarchy.iter().any(|node| {
-                        node.kind == ResourceKind::Namespace && node.name == namespace_name.as_ref()
-                    }) {
-                        let metadata = namespace.metadata.clone();
-                        let spec = Some(ResourceSpec::Namespace(()));
-                        let resource_metadata =
-                            extract_resource_metadata(&ResourceKind::Namespace, &metadata, &spec);
+                        if !hierarchy.iter().any(|node| {
+                            node.kind == ResourceKind::Namespace
+                                && node.name == namespace_name.as_ref()
+                        }) {
+                            let metadata = namespace.metadata.clone();
+                            let spec = Some(ResourceSpec::Namespace(()));
+                            let resource_metadata = extract_resource_metadata(
+                                &ResourceKind::Namespace,
+                                &metadata,
+                                &spec,
+                            );
 
-                        let namespace_node = HierarchyNode {
-                            kind: ResourceKind::Namespace,
-                            name: namespace_name.as_ref().to_string(),
-                            relatives: Vec::new(),
-                            metadata,
-                            spec,
-                            resource_metadata,
-                        };
-                        hierarchy.push(namespace_node);
+                            let namespace_node = HierarchyNode {
+                                kind: ResourceKind::Namespace,
+                                name: namespace_name.as_ref().to_string(),
+                                relatives: Vec::new(),
+                                metadata,
+                                spec,
+                                resource_metadata,
+                            };
+                            hierarchy.push(namespace_node);
 
-                        let snapshot = ResourceSnapshot::collect(&ctx);
+                            let snapshot = ResourceSnapshot::collect(&ctx);
 
-                        if let Some(httproutes) = &snapshot.httproutes {
-                            for httproute in httproutes.iter() {
-                                if httproute.metadata.namespace.as_deref()
+                            if let Some(httproutes) = &snapshot.httproutes {
+                                for httproute in httproutes.iter() {
+                                    if httproute.metadata.namespace.as_deref()
+                                        == Some(namespace_name.as_ref())
+                                    {
+                                        update_httproute_relationships(
+                                            &mut hierarchy,
+                                            httproute,
+                                            &snapshot.services,
+                                            &snapshot.pods,
+                                        );
+                                    }
+                                }
+                            }
+
+                            for service in snapshot.services.iter() {
+                                if service.metadata.namespace.as_deref()
                                     == Some(namespace_name.as_ref())
                                 {
-                                    update_httproute_relationships(
+                                    update_service_relationships(
                                         &mut hierarchy,
-                                        httproute,
-                                        &snapshot.services,
+                                        service,
                                         &snapshot.pods,
                                     );
                                 }
                             }
+
+                            for pod in snapshot.pods.iter() {
+                                if should_include_pod(pod)
+                                    && pod.metadata.namespace.as_deref()
+                                        == Some(namespace_name.as_ref())
+                                {
+                                    let mut pod_assigned = false;
+                                    if let Some(ns_node) = hierarchy.iter().find(|node| {
+                                        node.kind == ResourceKind::Namespace
+                                            && node.name == namespace_name.as_ref()
+                                    }) {
+                                        fn check_pod_in_hierarchy(
+                                            node: &HierarchyNode,
+                                            pod_name: &str,
+                                        ) -> bool {
+                                            if node.kind == ResourceKind::Pod
+                                                && node.name == pod_name
+                                            {
+                                                return true;
+                                            }
+                                            node.relatives.iter().any(|child| {
+                                                check_pod_in_hierarchy(child, pod_name)
+                                            })
+                                        }
+                                        pod_assigned = check_pod_in_hierarchy(
+                                            ns_node,
+                                            pod.name().unwrap_or_default().as_ref(),
+                                        );
+                                    }
+
+                                    if !pod_assigned
+                                        && let Some(ns_node) = hierarchy.iter_mut().find(|node| {
+                                            node.kind == ResourceKind::Namespace
+                                                && node.name == namespace_name.as_ref()
+                                        })
+                                    {
+                                        ns_node.relatives.push(new_pod(pod));
+                                    }
+                                }
+                            }
                         }
 
+                        drop(hierarchy);
+                        broadcast_state_update(&ctx).await;
+                    }
+                    watcher::Event::Delete(namespace) => {
+                        info!(
+                            "namespace deleted: {}",
+                            namespace.metadata.name.clone().unwrap_or_default()
+                        );
+
+                        let namespace_name = namespace.name().unwrap_or_default();
+                        let mut hierarchy = ctx.state.hierarchy.write().await;
+                        hierarchy.retain(|node| {
+                            !(node.kind == ResourceKind::Namespace
+                                && node.name == namespace_name.as_ref())
+                        });
+                        drop(hierarchy);
+
+                        broadcast_state_update(&ctx).await;
+                    }
+                    _ => {}
+                },
+                Err(err) => {
+                    error!(
+                        "error from namespace stream (stream will auto-recover): {:?}",
+                        err
+                    )
+                }
+            }
+        })
+        .await;
+
+    error!("Namespace watcher stream ended unexpectedly");
+}
+
+pub async fn httproute_watcher<S>(ctx: Context, httroute_stream: S)
+where
+    S: Stream<Item = Result<watcher::Event<HTTPRoute>, WatcherError>> + Unpin,
+{
+    info!("httproute watcher started, waiting for events...");
+
+    httroute_stream
+        .for_each(|event| async {
+            match event {
+                Ok(ev) => match ev {
+                    watcher::Event::Apply(httproute) => {
+                        info!(
+                            "httproute applied: {}",
+                            httproute.metadata.name.clone().unwrap_or_default()
+                        );
+
+                        let snapshot = ResourceSnapshot::collect(&ctx);
+                        let mut hierarchy = ctx.state.hierarchy.write().await;
+                        update_httproute_relationships(
+                            &mut hierarchy,
+                            &httproute,
+                            &snapshot.services,
+                            &snapshot.pods,
+                        );
+                        drop(hierarchy);
+
+                        broadcast_state_update(&ctx).await;
+                    }
+                    watcher::Event::Delete(httproute) => {
+                        info!(
+                            "httproute deleted: {}",
+                            httproute.metadata.name.clone().unwrap_or_default()
+                        );
+
+                        let httproute_name = httproute.metadata.name.as_deref().unwrap_or_default();
+                        let httproute_ns = httproute.metadata.namespace.as_deref();
+
+                        let mut hierarchy = ctx.state.hierarchy.write().await;
+                        for node in hierarchy.iter_mut() {
+                            remove_node_by_kind(
+                                node,
+                                ResourceKind::HTTPRoute,
+                                httproute_name,
+                                httproute_ns,
+                            );
+                        }
+
+                        let snapshot = ResourceSnapshot::collect(&ctx);
+
                         for service in snapshot.services.iter() {
-                            if service.metadata.namespace.as_deref()
-                                == Some(namespace_name.as_ref())
-                            {
+                            if service.metadata.namespace.as_deref() == httproute_ns {
                                 update_service_relationships(
                                     &mut hierarchy,
                                     service,
@@ -1221,126 +1379,23 @@ where
                                 );
                             }
                         }
+                        drop(hierarchy);
 
-                        for pod in snapshot.pods.iter() {
-                            if should_include_pod(pod)
-                                && pod.metadata.namespace.as_deref()
-                                    == Some(namespace_name.as_ref())
-                            {
-                                let mut pod_assigned = false;
-                                if let Some(ns_node) = hierarchy.iter().find(|node| {
-                                    node.kind == ResourceKind::Namespace
-                                        && node.name == namespace_name.as_ref()
-                                }) {
-                                    fn check_pod_in_hierarchy(
-                                        node: &HierarchyNode,
-                                        pod_name: &str,
-                                    ) -> bool {
-                                        if node.kind == ResourceKind::Pod && node.name == pod_name {
-                                            return true;
-                                        }
-                                        node.relatives
-                                            .iter()
-                                            .any(|child| check_pod_in_hierarchy(child, pod_name))
-                                    }
-                                    pod_assigned = check_pod_in_hierarchy(
-                                        ns_node,
-                                        pod.name().unwrap_or_default().as_ref(),
-                                    );
-                                }
-
-                                if !pod_assigned
-                                    && let Some(ns_node) = hierarchy.iter_mut().find(|node| {
-                                        node.kind == ResourceKind::Namespace
-                                            && node.name == namespace_name.as_ref()
-                                    })
-                                {
-                                    ns_node.relatives.push(new_pod(pod));
-                                }
-                            }
-                        }
+                        broadcast_state_update(&ctx).await;
                     }
+                    _ => {}
+                },
+                Err(err) => {
+                    error!(
+                        "error from httproute stream (stream will auto-recover): {:?}",
+                        err
+                    )
                 }
-                watcher::Event::Delete(namespace) => {
-                    info!(
-                        "namespace deleted: {}",
-                        namespace.metadata.name.clone().unwrap_or_default()
-                    );
-
-                    let namespace_name = namespace.name().unwrap_or_default();
-                    let mut hierarchy = ctx.state.hierarchy.write().await;
-                    hierarchy.retain(|node| {
-                        !(node.kind == ResourceKind::Namespace
-                            && node.name == namespace_name.as_ref())
-                    });
-                }
-                _ => {}
-            },
-            Err(err) => {
-                error!("error from namespace stream {:?}", err)
             }
-        }
-    }
-}
+        })
+        .await;
 
-pub async fn httproute_watcher<S>(ctx: Context, mut httroute_stream: S)
-where
-    S: Stream<Item = Result<watcher::Event<HTTPRoute>, WatcherError>> + Unpin,
-{
-    info!("httproute watcher started, waiting for events...");
-
-    while let Some(event) = httroute_stream.next().await {
-        match event {
-            Ok(ev) => match ev {
-                watcher::Event::Apply(httproute) => {
-                    info!(
-                        "httproute applied: {}",
-                        httproute.metadata.name.clone().unwrap_or_default()
-                    );
-
-                    let snapshot = ResourceSnapshot::collect(&ctx);
-                    let mut hierarchy = ctx.state.hierarchy.write().await;
-                    update_httproute_relationships(
-                        &mut hierarchy,
-                        &httproute,
-                        &snapshot.services,
-                        &snapshot.pods,
-                    );
-                }
-                watcher::Event::Delete(httproute) => {
-                    info!(
-                        "httproute deleted: {}",
-                        httproute.metadata.name.clone().unwrap_or_default()
-                    );
-
-                    let httproute_name = httproute.metadata.name.as_deref().unwrap_or_default();
-                    let httproute_ns = httproute.metadata.namespace.as_deref();
-
-                    let mut hierarchy = ctx.state.hierarchy.write().await;
-                    for node in hierarchy.iter_mut() {
-                        remove_node_by_kind(
-                            node,
-                            ResourceKind::HTTPRoute,
-                            httproute_name,
-                            httproute_ns,
-                        );
-                    }
-
-                    let snapshot = ResourceSnapshot::collect(&ctx);
-
-                    for service in snapshot.services.iter() {
-                        if service.metadata.namespace.as_deref() == httproute_ns {
-                            update_service_relationships(&mut hierarchy, service, &snapshot.pods);
-                        }
-                    }
-                }
-                _ => {}
-            },
-            Err(err) => {
-                error!("error from httproute stream {:?}", err)
-            }
-        }
-    }
+    error!("HTTPRoute watcher stream ended unexpectedly");
 }
 
 #[cfg(test)]
