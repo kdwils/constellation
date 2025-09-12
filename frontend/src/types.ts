@@ -26,4 +26,7 @@ export interface ResourceNode {
     cluster_ips?: string[];
     external_ips?: string[];
     pod_ips?: string[];
+    group?: string;
+    display_name?: string;
+    ignore?: boolean;
 }
