@@ -3,11 +3,16 @@ use axum::{
     Router,
     extract::State as AxumState,
     http::StatusCode,
-    response::{IntoResponse, Json, Response},
+    response::{
+        IntoResponse, Json, Response,
+        sse::{Event, KeepAlive, Sse},
+    },
     routing::get,
 };
+use futures::{Stream, stream};
 use serde::Serialize;
-use tokio_stream::wrappers::BroadcastStream;
+use std::convert::Infallible;
+use tokio_stream::{StreamExt, wrappers::BroadcastStream};
 use tower_http::services::{ServeDir, ServeFile};
 
 #[derive(Serialize)]
@@ -35,12 +40,11 @@ async fn state(AxumState(app_state): AxumState<AppState>) -> Json<Vec<HierarchyN
     Json(sorted_graph)
 }
 
-async fn state_stream(AxumState(app_state): AxumState<AppState>) -> Response {
-    use axum::http::header;
-    use futures::stream;
-    use tokio_stream::StreamExt;
+async fn state_stream(
+    AxumState(app_state): AxumState<AppState>,
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    let rx = app_state.state_updates.subscribe();
 
-    // Send initial state
     let initial_state = {
         let hierarchy = app_state.hierarchy.read().await;
         let mut sorted_hierarchy = hierarchy.clone();
@@ -49,41 +53,47 @@ async fn state_stream(AxumState(app_state): AxumState<AppState>) -> Response {
     };
 
     let initial_json = serde_json::to_string(&initial_state).unwrap_or_else(|_| "[]".to_string());
-    let initial_event = format!("data: {}\n\n", initial_json);
 
-    // Subscribe to updates
-    let rx = app_state.state_updates.subscribe();
-    let update_stream = BroadcastStream::new(rx).filter_map(|result| match result {
-        Ok(mut state) => {
-            state.sort_by(|a, b| a.name.cmp(&b.name));
-            match serde_json::to_string(&state) {
-                Ok(json) => Some(format!("data: {}\n\n", json)),
-                Err(_) => None,
+    let initial_event = stream::once(async { Ok(Event::default().data(initial_json)) });
+
+    let app_state_for_stream = app_state.clone();
+    let update_stream = BroadcastStream::new(rx).then(move |result| {
+        let app_state = app_state_for_stream.clone();
+        async move {
+            match result {
+                Ok(mut state) => {
+                    state.sort_by(|a, b| a.name.cmp(&b.name));
+                    match serde_json::to_string(&state) {
+                        Ok(json) => Ok(Event::default().data(json)),
+                        Err(err) => {
+                            tracing::warn!("Failed to serialize state for SSE: {}", err);
+                            Ok(Event::default().data("{\"error\":\"serialization_failed\"}"))
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::info!("stream error: {}", e);
+                    let hierarchy = app_state.hierarchy.read().await;
+                    let mut sorted_hierarchy = hierarchy.clone();
+                    sorted_hierarchy.sort_by(|a, b| a.name.cmp(&b.name));
+
+                    match serde_json::to_string(&sorted_hierarchy) {
+                        Ok(json) => Ok(Event::default().data(json)),
+                        Err(err) => {
+                            tracing::warn!("Failed to serialize current state after lag: {}", err);
+                            Ok(Event::default().data("{\"error\":\"serialization_failed\"}"))
+                        }
+                    }
+                }
             }
         }
-        Err(_) => None,
     });
 
-    // Combine initial state + updates
-    let combined_stream = stream::once(async { initial_event })
-        .chain(update_stream)
-        .map(Ok::<_, axum::Error>);
-
-    let body = axum::body::Body::from_stream(combined_stream);
-
-    Response::builder()
-        .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, "text/event-stream")
-        .header(header::CACHE_CONTROL, "no-cache")
-        .header(header::CONNECTION, "keep-alive")
-        .header("Access-Control-Allow-Origin", "*")
-        .body(body)
-        .unwrap()
+    let combined_stream = initial_event.chain(update_stream);
+    Sse::new(combined_stream).keep_alive(KeepAlive::default())
 }
 
 async fn healthz(AxumState(app_state): AxumState<AppState>) -> Response {
-    use axum::http::StatusCode;
-
     let hierarchy = app_state.hierarchy.read().await;
     let ready = !hierarchy.is_empty();
     drop(hierarchy);
