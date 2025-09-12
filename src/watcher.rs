@@ -296,22 +296,24 @@ impl ResourceMetadata {
     }
 }
 
-fn extract_constellation_annotations(metadata: &ObjectMeta) -> (Option<String>, Option<String>, bool) {
+fn extract_constellation_annotations(
+    metadata: &ObjectMeta,
+) -> (Option<String>, Option<String>, bool) {
     let annotations = metadata.annotations.as_ref();
-    
+
     let group = annotations
         .and_then(|a| a.get("constellation.kyledev.co/group"))
-        .map(|s| s.clone());
-    
+        .cloned();
+
     let display_name = annotations
         .and_then(|a| a.get("constellation.kyledev.co/display-name"))
-        .map(|s| s.clone());
-    
+        .cloned();
+
     let ignore = annotations
         .and_then(|a| a.get("constellation.kyledev.co/ignore"))
         .map(|s| s == "true")
         .unwrap_or(false);
-    
+
     (group, display_name, ignore)
 }
 
@@ -494,7 +496,7 @@ fn extract_resource_metadata(
                 ignore,
                 ..ResourceMetadata::empty()
             }
-        },
+        }
     }
 }
 
