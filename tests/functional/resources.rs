@@ -89,14 +89,6 @@ impl TestResources {
         Ok(deployments.create(&Default::default(), &deployment).await?)
     }
 
-    pub async fn create_test_service(
-        &self,
-        name: &str,
-        app_selector: &str,
-    ) -> Result<Service, Box<dyn std::error::Error>> {
-        self.create_test_service_with_annotations(name, app_selector, None).await
-    }
-
     pub async fn create_test_service_with_annotations(
         &self,
         name: &str,
@@ -183,42 +175,6 @@ impl TestResources {
             .await?;
 
         Ok(pod_list.items)
-    }
-
-    pub async fn restart_deployment(&self, name: &str) -> Result<(), Box<dyn std::error::Error>> {
-        let deployments: Api<Deployment> = Api::namespaced(self.client.clone(), &self.namespace);
-        deployments.restart(&name).await?;
-        Ok(())
-    }
-
-    pub async fn create_test_pod_with_annotations(
-        &self,
-        name: &str,
-        labels: BTreeMap<String, String>,
-        annotations: Option<BTreeMap<String, String>>,
-    ) -> Result<Pod, Box<dyn std::error::Error>> {
-        let pod = Pod {
-            metadata: ObjectMeta {
-                name: Some(name.to_string()),
-                namespace: Some(self.namespace.clone()),
-                labels: Some(labels),
-                annotations,
-                ..Default::default()
-            },
-            spec: Some(PodSpec {
-                containers: vec![Container {
-                    name: "app".to_string(),
-                    image: Some("busybox:latest".to_string()),
-                    command: Some(vec!["sleep".to_string(), "3600".to_string()]),
-                    ..Default::default()
-                }],
-                ..Default::default()
-            }),
-            ..Default::default()
-        };
-
-        let pods: Api<Pod> = Api::namespaced(self.client.clone(), &self.namespace);
-        Ok(pods.create(&Default::default(), &pod).await?)
     }
 
     pub async fn delete_pod(&self, name: &str) -> Result<(), Box<dyn std::error::Error>> {
