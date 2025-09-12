@@ -1,115 +1,98 @@
 import type { ResourceNode } from "../types";
+import { ViewModeDropdown } from "./ViewModeDropdown";
+import { SidebarItem } from "./SidebarItem";
+import { extractGroups, calculateNamespaceStats, calculateResourceCollectionStats } from "../utils/resourceStats";
 
 interface NamespaceSidebarProps {
     namespaces: ResourceNode[];
     selectedNamespace: string | null;
     onNamespaceSelect: (namespace: string) => void;
+    viewMode: 'namespace' | 'group';
+    onViewModeChange: (mode: 'namespace' | 'group') => void;
+    selectedGroup: string | null;
+    onGroupSelect: (group: string) => void;
 }
 
-interface NamespaceStats {
-    pods: number;
-    healthyPods: number;
-    hasExternalRoutes: boolean;
-}
 
-function getNamespaceStats(namespace: ResourceNode): NamespaceStats {
-    let pods = 0;
-    let healthyPods = 0;
-    let hasExternalRoutes = false;
-
-    function traverseResources(nodes: ResourceNode[]) {
-        for (const node of nodes) {
-            switch (node.kind) {
-                case "Ingress":
-                case "HTTPRoute":
-                    hasExternalRoutes = true;
-                    break;
-                case "Pod":
-                    pods++;
-                    if (node.phase === "Running") {
-                        healthyPods++;
-                    }
-                    break;
-            }
-
-            if (node.relatives) {
-                traverseResources(node.relatives);
-            }
-        }
-    }
-
-    if (namespace.relatives) {
-        traverseResources(namespace.relatives);
-    }
-
-    return { pods, healthyPods, hasExternalRoutes };
-}
-
-export function NamespaceSidebar({ namespaces, selectedNamespace, onNamespaceSelect }: NamespaceSidebarProps) {
+export function NamespaceSidebar({ namespaces, selectedNamespace, onNamespaceSelect, viewMode, onViewModeChange, selectedGroup, onGroupSelect }: NamespaceSidebarProps) {
+    const groups = extractGroups(namespaces);
     return (
         <div className="w-80 bg-white border-r border-gray-200 flex flex-col h-screen">
             <div className="p-4 border-b border-gray-200 flex-shrink-0">
-                <h2 className="text-lg font-semibold text-gray-900">Namespaces</h2>
-                <p className="text-sm text-gray-600 mt-1">{namespaces.length} total</p>
+                <div className="flex items-center justify-between mb-3">
+                    <h2 className="text-lg font-semibold text-gray-900">Navigation</h2>
+                </div>
+
+                <div className="mb-3">
+                    <ViewModeDropdown
+                        value={viewMode}
+                        onChange={onViewModeChange}
+                    />
+                </div>
+
+                {viewMode === 'namespace' ? (
+                    <p className="text-sm text-gray-600">{namespaces.length} namespaces</p>
+                ) : (
+                    <p className="text-sm text-gray-600">{groups.length} groups</p>
+                )}
             </div>
 
             <div className="flex-1 overflow-y-auto overflow-x-hidden min-h-0">
-                <div className="p-2">
-                    {namespaces.map((namespace) => {
-                        const stats = getNamespaceStats(namespace);
-                        const isSelected = selectedNamespace === namespace.name;
-                        const healthPercent = stats.pods > 0 ? Math.round((stats.healthyPods / stats.pods) * 100) : 0;
+                {viewMode === 'namespace' ? (
+                    <div className="p-2">
+                        {namespaces.map((namespace) => {
+                            const stats = calculateNamespaceStats(namespace);
+                            const isSelected = selectedNamespace === namespace.name;
 
-                        return (
-                            <button
-                                key={namespace.name}
-                                onClick={() => onNamespaceSelect(namespace.name)}
-                                className={`w-full p-4 rounded-lg text-left mb-2 transition-all duration-200 ${isSelected
-                                        ? 'bg-blue-50 border-2 border-blue-200 shadow-sm'
-                                        : 'bg-gray-50 hover:bg-gray-100 border-2 border-transparent'
-                                    }`}
-                            >
-                                <div className="flex items-center justify-between mb-2">
-                                    <h3 className={`font-medium truncate ${isSelected ? 'text-blue-900' : 'text-gray-900'
-                                        }`}>
-                                        {namespace.name}
-                                    </h3>
-                                    {stats.hasExternalRoutes && (
-                                        <div className="flex-shrink-0">
-                                            <span className="text-blue-600 text-sm" title="Has external routes">🌐</span>
-                                        </div>
-                                    )}
-                                </div>
+                            return (
+                                <SidebarItem
+                                    key={namespace.name}
+                                    name={`📁 ${namespace.name}`}
+                                    isSelected={isSelected}
+                                    onClick={() => onNamespaceSelect(namespace.name)}
+                                    stats={{
+                                        pods: stats.totalPods,
+                                        healthyPods: stats.healthyPods
+                                    }}
+                                />
+                            );
+                        })}
+                    </div>
+                ) : (
+                    <div className="p-2">
+                        {groups.length > 0 ? groups.map((group) => {
+                            const stats = calculateResourceCollectionStats(group.resources);
+                            const isSelected = selectedGroup === group.name;
 
-                                <div className="space-y-1 text-xs text-gray-600">
-                                    <div className="flex justify-between">
-                                        <span>Pods:</span>
-                                        <div className="flex items-center space-x-2">
-                                            <span className="font-medium">{stats.healthyPods}/{stats.pods}</span>
-                                            {stats.pods > 0 && (
-                                                <div className={`w-12 h-1.5 rounded-full ${healthPercent === 100 ? 'bg-green-200' :
-                                                        healthPercent > 50 ? 'bg-yellow-200' : 'bg-red-200'
-                                                    }`}>
-                                                    <div
-                                                        className={`h-full rounded-full transition-all duration-300 ${healthPercent === 100 ? 'bg-green-500' :
-                                                                healthPercent > 50 ? 'bg-yellow-500' : 'bg-red-500'
-                                                            }`}
-                                                        style={{ width: `${healthPercent}%` }}
-                                                    />
-                                                </div>
-                                            )}
-                                        </div>
-                                    </div>
-                                </div>
-                            </button>
-                        );
-                    })}
-                </div>
+                            return (
+                                <SidebarItem
+                                    key={group.name}
+                                    name={`🏷️ ${group.name}`}
+                                    isSelected={isSelected}
+                                    onClick={() => onGroupSelect(group.name)}
+                                    stats={{
+                                        pods: stats.totalPods,
+                                        healthyPods: stats.healthyPods
+                                    }}
+                                />
+                            );
+                        }) : (
+                            <div className="p-4 text-center text-gray-500">
+                                <p className="text-sm">
+                                    No custom groups found. Add annotations to your resources to create groups.
+                                </p>
+                            </div>
+                        )}
+                    </div>
+                )}
             </div>
 
             <div className="p-4 border-t border-gray-200 bg-gray-50 flex-shrink-0">
                 <p className="text-xs text-gray-500 text-center">
-                    Select a namespace to view details
+                    {viewMode === 'namespace'
+                        ? 'Select a namespace to view details'
+                        : 'Select a group to view details'
+                    }
                 </p>
             </div>
         </div>

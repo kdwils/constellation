@@ -92,6 +92,12 @@ pub struct ResourceMetadata {
     pub pod_ips: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub container_ports: Option<Vec<ContainerPortInfo>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub ignore: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -283,11 +289,35 @@ impl ResourceMetadata {
             external_ips: None,
             pod_ips: None,
             container_ports: None,
+            group: None,
+            display_name: None,
+            ignore: false,
         }
     }
 }
 
-fn extract_httproute_metadata(spec: &HTTPRouteSpec) -> ResourceMetadata {
+fn extract_constellation_annotations(
+    metadata: &ObjectMeta,
+) -> (Option<String>, Option<String>, bool) {
+    let annotations = metadata.annotations.as_ref();
+
+    let group = annotations
+        .and_then(|a| a.get("constellation.kyledev.co/group"))
+        .cloned();
+
+    let display_name = annotations
+        .and_then(|a| a.get("constellation.kyledev.co/display-name"))
+        .cloned();
+
+    let ignore = annotations
+        .and_then(|a| a.get("constellation.kyledev.co/ignore"))
+        .map(|s| s == "true")
+        .unwrap_or(false);
+
+    (group, display_name, ignore)
+}
+
+fn extract_httproute_metadata(metadata: &ObjectMeta, spec: &HTTPRouteSpec) -> ResourceMetadata {
     let hostnames = spec
         .hostnames
         .as_ref()
@@ -308,14 +338,19 @@ fn extract_httproute_metadata(spec: &HTTPRouteSpec) -> ResourceMetadata {
         Some(backends)
     };
 
+    let (group, display_name, ignore) = extract_constellation_annotations(metadata);
+
     ResourceMetadata {
         hostnames,
         backend_refs,
+        group,
+        display_name,
+        ignore,
         ..ResourceMetadata::empty()
     }
 }
 
-fn extract_service_metadata(spec: &v1::ServiceSpec) -> ResourceMetadata {
+fn extract_service_metadata(metadata: &ObjectMeta, spec: &v1::ServiceSpec) -> ResourceMetadata {
     let selectors = spec.selector.clone();
     let service_type = spec.type_.clone();
 
@@ -336,6 +371,8 @@ fn extract_service_metadata(spec: &v1::ServiceSpec) -> ResourceMetadata {
     let cluster_ips = extract_cluster_ips(spec);
     let external_ips = spec.external_ips.clone().filter(|ips| !ips.is_empty());
 
+    let (group, display_name, ignore) = extract_constellation_annotations(metadata);
+
     ResourceMetadata {
         selectors,
         ports,
@@ -345,6 +382,9 @@ fn extract_service_metadata(spec: &v1::ServiceSpec) -> ResourceMetadata {
         service_type,
         cluster_ips,
         external_ips,
+        group,
+        display_name,
+        ignore,
         ..ResourceMetadata::empty()
     }
 }
@@ -379,10 +419,15 @@ fn extract_pod_metadata(metadata: &ObjectMeta, spec: &v1::PodSpec) -> ResourceMe
         Some(container_port_list)
     };
 
+    let (group, display_name, ignore) = extract_constellation_annotations(metadata);
+
     ResourceMetadata {
         labels: metadata.labels.clone(),
         ports,
         container_ports,
+        group,
+        display_name,
+        ignore,
         ..ResourceMetadata::empty()
     }
 }
@@ -422,24 +467,36 @@ fn extract_resource_metadata(
             let Some(ResourceSpec::HTTPRoute(spec)) = spec else {
                 return ResourceMetadata::empty();
             };
-            extract_httproute_metadata(spec)
+            extract_httproute_metadata(metadata, spec)
         }
         ResourceKind::Service => {
             let Some(ResourceSpec::Service(spec)) = spec else {
                 return ResourceMetadata::empty();
             };
-            extract_service_metadata(spec)
+            extract_service_metadata(metadata, spec)
         }
         ResourceKind::Pod => {
             let Some(ResourceSpec::Pod(spec)) = spec else {
+                let (group, display_name, ignore) = extract_constellation_annotations(metadata);
                 return ResourceMetadata {
                     labels: metadata.labels.clone(),
+                    group,
+                    display_name,
+                    ignore,
                     ..ResourceMetadata::empty()
                 };
             };
             extract_pod_metadata(metadata, spec)
         }
-        ResourceKind::Namespace => ResourceMetadata::empty(),
+        ResourceKind::Namespace => {
+            let (group, display_name, ignore) = extract_constellation_annotations(metadata);
+            ResourceMetadata {
+                group,
+                display_name,
+                ignore,
+                ..ResourceMetadata::empty()
+            }
+        }
     }
 }
 
@@ -606,6 +663,18 @@ fn new_service(service: &Service) -> HierarchyNode {
     }
 }
 
+fn should_include_service(service: &Service) -> bool {
+    let metadata = &service.metadata;
+    let (_, _, ignore) = extract_constellation_annotations(metadata);
+    !ignore
+}
+
+fn should_include_httproute(httproute: &HTTPRoute) -> bool {
+    let metadata = &httproute.metadata;
+    let (_, _, ignore) = extract_constellation_annotations(metadata);
+    !ignore
+}
+
 fn remove_node_by_kind(
     node: &mut HierarchyNode,
     kind: ResourceKind,
@@ -624,6 +693,10 @@ fn remove_node_by_kind(
 }
 
 fn update_service_relationships(hierarchy: &mut [HierarchyNode], service: &Service, pods: &[Pod]) {
+    if !should_include_service(service) {
+        return;
+    }
+
     let service_name = service.name().unwrap_or_default();
     let service_ns = service.metadata.namespace.as_deref();
     let service_node = new_service(service);
@@ -716,6 +789,10 @@ fn update_httproute_relationships(
     services: &[Service],
     pods: &[Pod],
 ) {
+    if !should_include_httproute(httproute) {
+        return;
+    }
+
     let httproute_name = httproute.name().unwrap_or_default();
     let httproute_ns = httproute.metadata.namespace.as_deref();
 
@@ -893,6 +970,10 @@ async fn build_initial_relationships(ctx: Context) {
 
     if let Some(httproutes) = &snapshot.httproutes {
         for httproute in httproutes.iter() {
+            if !should_include_httproute(httproute) {
+                continue;
+            }
+
             if let Some(namespace) = hierarchy.iter_mut().find(|node| {
                 node.kind == ResourceKind::Namespace
                     && httproute.metadata.namespace == node.metadata.name
@@ -921,6 +1002,10 @@ async fn build_initial_relationships(ctx: Context) {
     }
 
     for service in snapshot.services.iter() {
+        if !should_include_service(service) {
+            continue;
+        }
+
         let service_namespace = service.metadata.namespace.clone().unwrap_or_default();
         let service_spec = service.spec.clone().unwrap_or_default();
 
@@ -1031,6 +1116,10 @@ async fn build_initial_relationships(ctx: Context) {
     }
 
     for service in snapshot.services.iter() {
+        if !should_include_service(service) {
+            continue;
+        }
+
         let service_namespace = service.metadata.namespace.as_deref().unwrap_or_default();
         let service_name = service.name().unwrap_or_default();
 
@@ -1431,6 +1520,9 @@ mod tests {
                 external_ips: None,
                 pod_ips: None,
                 container_ports: None,
+                group: None,
+                display_name: None,
+                ignore: false,
             },
         }
     }

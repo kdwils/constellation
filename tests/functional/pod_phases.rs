@@ -18,8 +18,18 @@ async fn test_comprehensive_resource_lifecycle() -> Result<(), Box<dyn std::erro
 
     sleep(Duration::from_secs(6)).await;
 
+    let mut service_annotations = std::collections::BTreeMap::new();
+    service_annotations.insert(
+        "constellation.kyledev.co/group".to_string(),
+        "backend".to_string(),
+    );
+    service_annotations.insert(
+        "constellation.kyledev.co/display-name".to_string(),
+        "Test Backend".to_string(),
+    );
+
     resources
-        .create_test_service("test-service", "test-app")
+        .create_test_service_with_annotations("test-service", "test-app", Some(service_annotations))
         .await?;
     resources.create_test_deployment("test-app", 1).await?;
     resources.wait_for_pods_ready("app=test-app", 1).await?;
@@ -42,6 +52,9 @@ async fn test_comprehensive_resource_lifecycle() -> Result<(), Box<dyn std::erro
     let service = &relatives[0];
     assert_eq!(service["kind"].as_str().unwrap(), "Service");
     assert_eq!(service["name"].as_str().unwrap(), "test-service");
+
+    assert_eq!(service["group"].as_str(), Some("backend"));
+    assert_eq!(service["display_name"].as_str(), Some("Test Backend"));
 
     let pod_relatives = service["relatives"].as_array().unwrap();
     assert_eq!(pod_relatives.len(), 1);
@@ -73,6 +86,9 @@ async fn test_comprehensive_resource_lifecycle() -> Result<(), Box<dyn std::erro
     let final_service = &final_relatives[0];
     assert_eq!(final_service["kind"].as_str().unwrap(), "Service");
     assert_eq!(final_service["name"].as_str().unwrap(), "test-service");
+
+    assert_eq!(final_service["group"].as_str(), Some("backend"));
+    assert_eq!(final_service["display_name"].as_str(), Some("Test Backend"));
 
     let final_pod_relatives = final_service["relatives"].as_array().unwrap();
     assert_eq!(final_pod_relatives.len(), 1);

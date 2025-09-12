@@ -89,10 +89,11 @@ impl TestResources {
         Ok(deployments.create(&Default::default(), &deployment).await?)
     }
 
-    pub async fn create_test_service(
+    pub async fn create_test_service_with_annotations(
         &self,
         name: &str,
         app_selector: &str,
+        annotations: Option<BTreeMap<String, String>>,
     ) -> Result<Service, Box<dyn std::error::Error>> {
         let mut selector = BTreeMap::new();
         selector.insert("app".to_string(), app_selector.to_string());
@@ -101,6 +102,7 @@ impl TestResources {
             metadata: ObjectMeta {
                 name: Some(name.to_string()),
                 namespace: Some(self.namespace.clone()),
+                annotations,
                 ..Default::default()
             },
             spec: Some(ServiceSpec {
@@ -173,12 +175,6 @@ impl TestResources {
             .await?;
 
         Ok(pod_list.items)
-    }
-
-    pub async fn restart_deployment(&self, name: &str) -> Result<(), Box<dyn std::error::Error>> {
-        let deployments: Api<Deployment> = Api::namespaced(self.client.clone(), &self.namespace);
-        deployments.restart(&name).await?;
-        Ok(())
     }
 
     pub async fn delete_pod(&self, name: &str) -> Result<(), Box<dyn std::error::Error>> {

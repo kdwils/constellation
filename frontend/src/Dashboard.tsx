@@ -3,6 +3,9 @@ import { useState, useEffect } from "react";
 import type { ResourceNode } from "./types";
 import { NamespaceSidebar } from "./components/NamespaceSidebar";
 import { NamespaceDetailView } from "./components/NamespaceDetailView";
+import { GroupDetailView } from "./components/GroupDetailView";
+import { extractGroups, calculateTotalResourcesAcrossNamespaces } from "./utils/resourceStats";
+import { EmptyStates } from "./components/shared/EmptyState";
 
 export default function Dashboard() {
     const [data, setData] = useState<ResourceNode[]>([]);
@@ -10,6 +13,8 @@ export default function Dashboard() {
     const [error, setError] = useState<string | null>(null);
     const [selectedNamespace, setSelectedNamespace] = useState<string | null>(null);
     const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
+    const [viewMode, setViewMode] = useState<'namespace' | 'group'>('namespace');
+    const [selectedGroup, setSelectedGroup] = useState<string | null>(null);
 
     useEffect(() => {
         let eventSource: WebSocket | null = null;
@@ -123,11 +128,32 @@ export default function Dashboard() {
     }
 
     const totalNamespaces = data.length;
-    const totalResources = data.reduce((sum, namespace) => {
-        return sum + countTotalResources(namespace);
-    }, 0);
+    const totalResources = calculateTotalResourcesAcrossNamespaces(data);
 
     const currentNamespace = selectedNamespace ? data.find(ns => ns.name === selectedNamespace) : null;
+    
+    const groups = new Map(
+        extractGroups(data).map(group => [group.name, group.resources])
+    );
+    const currentGroupResources = selectedGroup && groups.has(selectedGroup) ? groups.get(selectedGroup)! : null;
+    
+    // Handle view mode changes - clear selection when switching modes
+    const handleViewModeChange = (mode: 'namespace' | 'group') => {
+        setViewMode(mode);
+        if (mode === 'namespace') {
+            setSelectedGroup(null);
+            // Auto-select first namespace if available
+            if (data.length > 0 && !selectedNamespace) {
+                setSelectedNamespace(data[0].name);
+            }
+        } else {
+            setSelectedNamespace(null);
+            // Auto-select first group if available
+            if (groups.size > 0 && !selectedGroup) {
+                setSelectedGroup(Array.from(groups.keys())[0]);
+            }
+        }
+    };
 
     const getConnectionIndicator = () => {
         switch (connectionStatus) {
@@ -179,28 +205,38 @@ export default function Dashboard() {
                             namespaces={data}
                             selectedNamespace={selectedNamespace}
                             onNamespaceSelect={setSelectedNamespace}
+                            viewMode={viewMode}
+                            onViewModeChange={handleViewModeChange}
+                            selectedGroup={selectedGroup}
+                            onGroupSelect={setSelectedGroup}
                         />
                         <div className="flex-1 flex">
-                            {currentNamespace ? (
-                                <NamespaceDetailView namespace={currentNamespace} />
-                            ) : (
-                                <div className="flex-1 flex items-center justify-center bg-white">
-                                    <div className="text-center">
-                                        <div className="text-gray-400 text-6xl mb-4">📋</div>
-                                        <h2 className="text-xl font-semibold text-gray-900 mb-2">Select a Namespace</h2>
-                                        <p className="text-gray-600">Choose a namespace from the sidebar to view its resources.</p>
+                            {viewMode === 'namespace' ? (
+                                currentNamespace ? (
+                                    <NamespaceDetailView namespace={currentNamespace} />
+                                ) : (
+                                    <div className="flex-1 bg-white p-6">
+                                        <EmptyStates.SelectNamespace hasNamespaces={data.length > 0} />
                                     </div>
-                                </div>
+                                )
+                            ) : (
+                                currentGroupResources && selectedGroup ? (
+                                    <GroupDetailView groupName={selectedGroup} resources={currentGroupResources} />
+                                ) : (
+                                    <div className="flex-1 bg-white p-6">
+                                        {groups.size === 0 ? (
+                                            <EmptyStates.NoGroups />
+                                        ) : (
+                                            <EmptyStates.SelectGroup hasGroups={groups.size > 0} />
+                                        )}
+                                    </div>
+                                )
                             )}
                         </div>
                     </>
                 ) : (
                     <div className="flex-1 flex items-center justify-center">
-                        <div className="text-center">
-                            <div className="text-gray-400 text-6xl mb-4">📦</div>
-                            <h2 className="text-xl font-semibold text-gray-900 mb-2">No Resources Found</h2>
-                            <p className="text-gray-600">No Kubernetes resources are currently being tracked.</p>
-                        </div>
+                        <EmptyStates.NoClusterResources />
                     </div>
                 )}
             </div>
@@ -208,12 +244,3 @@ export default function Dashboard() {
     );
 }
 
-function countTotalResources(node: ResourceNode): number {
-    if (!node.relatives) return 0;
-
-    let count = node.relatives.length;
-    for (const relative of node.relatives) {
-        count += countTotalResources(relative);
-    }
-    return count;
-}

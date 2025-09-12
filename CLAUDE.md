@@ -169,3 +169,4 @@ fn handle_result(result: Result<i32, &str>) -> i32 {
 * Return early when possible
 * Only add comments that are impactful
 * NEVER write obvious comments that restate what the code does
+* **Create reusable components instead of repeating code patterns** - If you find yourself repeating the same conditional logic or styling patterns multiple times, extract it into a reusable component
