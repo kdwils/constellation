@@ -7,7 +7,7 @@ import { MetadataContainer } from "./MetadataContainer";
 import { CompactMetadataRow } from "./CompactMetadataRow";
 import { MetadataLabel } from "./MetadataLabel";
 import { PortMappingList } from "./PortMappingList";
-import type { ContainerPortInfo } from "../ResourceNode";
+import type { ContainerPortInfo } from "../types";
 
 interface ServiceBoxProps {
     name: string;
@@ -39,7 +39,7 @@ export function ServiceBox({ name, selectors, portMappings, isTargetedByRoute, s
                         {clusterIps && clusterIps.length > 0 && <MetadataItem label="cluster-ips" value={clusterIps} />}
                         {externalIps && externalIps.length > 0 && <MetadataItem label="external-ips" value={externalIps} />}
                     </CompactMetadataRow>
-                    
+
                     {selectors && Object.keys(selectors).length > 0 && (
                         <MetadataRow icon="selectors" alignItems="start">
                             <div className="flex-1 text-slate-600 font-medium">

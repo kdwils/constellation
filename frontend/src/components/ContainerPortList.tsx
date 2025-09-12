@@ -1,5 +1,5 @@
 import { HighlightableList } from "./HighlightableList";
-import type { ContainerPortInfo } from "../ResourceNode";
+import type { ContainerPortInfo } from "../types";
 
 interface ContainerPortListProps {
     containerPorts: ContainerPortInfo[];
@@ -11,13 +11,13 @@ export function ContainerPortList({ containerPorts, highlightedPorts = [], highl
     return (
         <HighlightableList
             items={containerPorts}
-            getDisplayText={(portInfo) => 
-                portInfo.name 
+            getDisplayText={(portInfo) =>
+                portInfo.name
                     ? `${portInfo.port} (${portInfo.name})`
                     : portInfo.port.toString()
             }
-            isHighlighted={(portInfo) => 
-                highlightedPorts.includes(portInfo.port) || 
+            isHighlighted={(portInfo) =>
+                highlightedPorts.includes(portInfo.port) ||
                 (portInfo.name ? highlightedPortNames.includes(portInfo.name) : false)
             }
         />

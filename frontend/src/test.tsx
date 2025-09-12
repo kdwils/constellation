@@ -1,4 +1,4 @@
-import type { ResourceNode } from "./ResourceNode";
+import type { ResourceNode } from "./types";
 
 export const testResourceNodes: ResourceNode[] = [
     {

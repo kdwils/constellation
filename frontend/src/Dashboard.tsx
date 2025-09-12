@@ -1,6 +1,6 @@
 
 import { useState, useEffect } from "react";
-import type { ResourceNode } from "./ResourceNode";
+import type { ResourceNode } from "./types";
 import { NamespaceSidebar } from "./components/NamespaceSidebar";
 import { NamespaceDetailView } from "./components/NamespaceDetailView";
 
@@ -37,7 +37,6 @@ export default function Dashboard() {
                 return;
             }
 
-            // Create WebSocket connection
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
             const wsUrl = `${protocol}//${window.location.host}/state/stream`;
             eventSource = new WebSocket(wsUrl);
@@ -53,8 +52,7 @@ export default function Dashboard() {
                     setData(newData);
                     setLoading(false);
 
-                    // Auto-select first namespace if available and none selected
-                    if (newData.length > 0 && !selectedNamespace) {
+                    if (newData.length > 0 && (!selectedNamespace || !newData.find((ns: ResourceNode) => ns.name === selectedNamespace))) {
                         setSelectedNamespace(newData[0].name);
                     }
                 } catch (err) {
@@ -69,7 +67,6 @@ export default function Dashboard() {
                 setError('Connection to server lost. Retrying...');
                 eventSource?.close();
 
-                // Retry connection after delay
                 retryTimeout = setTimeout(() => {
                     setConnectionStatus('connecting');
                     createConnection();
@@ -98,7 +95,7 @@ export default function Dashboard() {
             clearTimeout(healthCheckTimeout);
             eventSource?.close();
         };
-    }, []); // Remove selectedNamespace dependency since we get updates via SSE
+    }, []);
 
     if (loading) {
         return (

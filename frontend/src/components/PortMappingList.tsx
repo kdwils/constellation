@@ -1,5 +1,5 @@
 import { HighlightableList } from "./HighlightableList";
-import type { ContainerPortInfo } from "../ResourceNode";
+import type { ContainerPortInfo } from "../types";
 
 interface PortMappingListProps {
     portMappings: string[];
@@ -8,20 +8,20 @@ interface PortMappingListProps {
 
 export function PortMappingList({ portMappings, childContainerPorts = [] }: PortMappingListProps) {
     const isPortHighlighted = (mapping: string): boolean => {
-        const targetPortMatch = mapping.includes('→') 
-            ? mapping.split('→')[1] 
+        const targetPortMatch = mapping.includes('→')
+            ? mapping.split('→')[1]
             : mapping;
-        
+
         return childContainerPorts.some(containerPort => {
             const targetPortNum = parseInt(targetPortMatch);
             if (!isNaN(targetPortNum) && containerPort.port === targetPortNum) {
                 return true;
             }
-            
+
             if (containerPort.name && containerPort.name === targetPortMatch) {
                 return true;
             }
-            
+
             return false;
         });
     };

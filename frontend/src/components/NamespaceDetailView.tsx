@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { ReactNode } from "react";
-import type { ResourceNode } from "../ResourceNode";
+import type { ResourceNode } from "../types";
 import { ServiceBox } from "./Service";
 import { PodBox } from "./Pod";
 import { HttpRouteBox } from "./HttpRoute";
@@ -44,7 +44,7 @@ function getNamespaceOverview(namespace: ResourceNode): NamespaceOverview {
                     }
                     break;
             }
-            
+
             if (node.relatives) {
                 traverseResources(node.relatives);
             }
@@ -87,10 +87,9 @@ function CollapsibleSection({ title, isCollapsed, onToggle, children }: Collapsi
                     {isCollapsed ? '▶' : '▼'}
                 </div>
             </button>
-            
-            <div className={`transition-all duration-300 ease-in-out overflow-hidden ${
-                isCollapsed ? 'max-h-0 opacity-0' : 'max-h-[600px] opacity-100'
-            }`}>
+
+            <div className={`transition-all duration-300 ease-in-out overflow-hidden ${isCollapsed ? 'max-h-0 opacity-0' : 'max-h-[600px] opacity-100'
+                }`}>
                 <div className="p-6 overflow-y-auto max-h-[550px]">
                     {children}
                 </div>
@@ -102,7 +101,7 @@ function CollapsibleSection({ title, isCollapsed, onToggle, children }: Collapsi
 function ResourceNodeWrapper({ node, level, children, serviceSelectors, targetPorts, targetPortNames, backendRefs }: ResourceNodeWrapperProps) {
     const hasChildren = node.relatives && node.relatives.length > 0;
     const shouldHaveBorder = level === 0;
-    
+
     return (
         <div className={`${shouldHaveBorder ? 'border border-gray-200 rounded-lg p-4 bg-gray-50/50' : ''} space-y-4`}>
             {children}
@@ -125,7 +124,7 @@ function renderResourceTree(nodes: ResourceNode[], level: number = 0, serviceSel
 
     return nodes.map((node) => {
         const key = `${node.kind}-${node.name}-${level}`;
-        
+
         switch (node.kind) {
             case "Ingress":
                 return (
@@ -144,7 +143,7 @@ function renderResourceTree(nodes: ResourceNode[], level: number = 0, serviceSel
                         }
                     });
                 }
-                
+
                 return (
                     <ResourceNodeWrapper key={key} node={node} level={level} serviceSelectors={serviceSelectors} targetPorts={targetPorts} targetPortNames={targetPortNames} backendRefs={backendRefs}>
                         <HttpRouteBox name={node.name} hostnames={node.hostnames} backend_refs={node.backend_refs} referencedServiceNames={referencedServiceNames} />
@@ -155,7 +154,7 @@ function renderResourceTree(nodes: ResourceNode[], level: number = 0, serviceSel
             case "Service": {
                 const currentBackendRefs = collectBackendRefs(nodes);
                 const isTargetedByRoute = (backendRefs || currentBackendRefs).includes(node.name);
-                
+
                 const childContainerPorts: any[] = [];
                 if (node.relatives) {
                     for (const childNode of node.relatives) {
@@ -164,26 +163,26 @@ function renderResourceTree(nodes: ResourceNode[], level: number = 0, serviceSel
                         }
                     }
                 }
-                
+
                 return (
-                    <ResourceNodeWrapper 
-                        key={key} 
-                        node={node} 
-                        level={level} 
-                        serviceSelectors={node.selectors} 
-                        targetPorts={node.target_ports} 
+                    <ResourceNodeWrapper
+                        key={key}
+                        node={node}
+                        level={level}
+                        serviceSelectors={node.selectors}
+                        targetPorts={node.target_ports}
                         targetPortNames={node.target_port_names}
                         backendRefs={backendRefs || currentBackendRefs}
                     >
-                        <ServiceBox 
-                            name={node.name} 
-                            selectors={node.selectors} 
-                            portMappings={node.port_mappings} 
-                            isTargetedByRoute={isTargetedByRoute} 
-                            serviceType={node.service_type} 
-                            clusterIps={node.cluster_ips} 
-                            externalIps={node.external_ips} 
-                            childContainerPorts={childContainerPorts} 
+                        <ServiceBox
+                            name={node.name}
+                            selectors={node.selectors}
+                            portMappings={node.port_mappings}
+                            isTargetedByRoute={isTargetedByRoute}
+                            serviceType={node.service_type}
+                            clusterIps={node.cluster_ips}
+                            externalIps={node.external_ips}
+                            childContainerPorts={childContainerPorts}
                         />
                     </ResourceNodeWrapper>
                 );
@@ -192,15 +191,15 @@ function renderResourceTree(nodes: ResourceNode[], level: number = 0, serviceSel
             case "Pod":
                 return (
                     <ResourceNodeWrapper key={key} node={node} level={level} serviceSelectors={serviceSelectors} targetPorts={targetPorts} targetPortNames={targetPortNames} backendRefs={backendRefs}>
-                        <PodBox 
-                            name={node.name} 
-                            labels={node.labels} 
+                        <PodBox
+                            name={node.name}
+                            labels={node.labels}
                             containerPorts={node.container_ports}
-                            serviceSelectors={serviceSelectors} 
+                            serviceSelectors={serviceSelectors}
                             targetPorts={targetPorts}
                             targetPortNames={targetPortNames}
-                            phase={node.phase} 
-                            podIps={node.pod_ips} 
+                            phase={node.phase}
+                            podIps={node.pod_ips}
                         />
                     </ResourceNodeWrapper>
                 );
@@ -215,7 +214,7 @@ export function NamespaceDetailView({ namespace }: NamespaceDetailViewProps) {
     const overview = getNamespaceOverview(namespace);
     const healthPercent = overview.totalPods > 0 ? Math.round((overview.healthyPods / overview.totalPods) * 100) : 0;
     const [isResourcesCollapsed, setIsResourcesCollapsed] = useState(false);
-    
+
     return (
         <div className="flex-1 overflow-y-auto bg-gray-50">
             <div className="w-full h-full">
@@ -242,14 +241,12 @@ export function NamespaceDetailView({ namespace }: NamespaceDetailViewProps) {
 
                         <div className="bg-white rounded-lg border border-gray-200 p-6">
                             <div className="flex items-center">
-                                <div className={`p-3 rounded-full ${
-                                    healthPercent === 100 ? 'bg-green-100' :
-                                    healthPercent > 50 ? 'bg-yellow-100' : 'bg-red-100'
-                                }`}>
-                                    <div className={`w-6 h-6 ${
-                                        healthPercent === 100 ? 'text-green-600' :
-                                        healthPercent > 50 ? 'text-yellow-600' : 'text-red-600'
+                                <div className={`p-3 rounded-full ${healthPercent === 100 ? 'bg-green-100' :
+                                        healthPercent > 50 ? 'bg-yellow-100' : 'bg-red-100'
                                     }`}>
+                                    <div className={`w-6 h-6 ${healthPercent === 100 ? 'text-green-600' :
+                                            healthPercent > 50 ? 'text-yellow-600' : 'text-red-600'
+                                        }`}>
                                         {healthPercent === 100 ? '✅' : healthPercent > 50 ? '⚠️' : '❌'}
                                     </div>
                                 </div>
@@ -261,23 +258,23 @@ export function NamespaceDetailView({ namespace }: NamespaceDetailViewProps) {
                         </div>
                     </div>
 
-                <CollapsibleSection
-                    title="Resource Relationships"
-                    isCollapsed={isResourcesCollapsed}
-                    onToggle={() => setIsResourcesCollapsed(!isResourcesCollapsed)}
-                >
-                    {namespace.relatives && namespace.relatives.length > 0 ? (
-                        <div className="space-y-4">
-                            {renderResourceTree(namespace.relatives, 0)}
-                        </div>
-                    ) : (
-                        <div className="text-center py-12">
-                            <div className="text-gray-400 text-4xl mb-4">📭</div>
-                            <h3 className="text-lg font-medium text-gray-900 mb-2">No Resources Found</h3>
-                            <p className="text-gray-600">This namespace doesn't contain any tracked resources.</p>
-                        </div>
-                    )}
-                </CollapsibleSection>
+                    <CollapsibleSection
+                        title="Resource Relationships"
+                        isCollapsed={isResourcesCollapsed}
+                        onToggle={() => setIsResourcesCollapsed(!isResourcesCollapsed)}
+                    >
+                        {namespace.relatives && namespace.relatives.length > 0 ? (
+                            <div className="space-y-4">
+                                {renderResourceTree(namespace.relatives, 0)}
+                            </div>
+                        ) : (
+                            <div className="text-center py-12">
+                                <div className="text-gray-400 text-4xl mb-4">📭</div>
+                                <h3 className="text-lg font-medium text-gray-900 mb-2">No Resources Found</h3>
+                                <p className="text-gray-600">This namespace doesn't contain any tracked resources.</p>
+                            </div>
+                        )}
+                    </CollapsibleSection>
                 </div>
             </div>
         </div>

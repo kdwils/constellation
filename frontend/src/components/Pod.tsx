@@ -7,7 +7,7 @@ import { MetadataContainer } from "./MetadataContainer";
 import { CompactMetadataRow } from "./CompactMetadataRow";
 import { MetadataLabel } from "./MetadataLabel";
 import { ContainerPortList } from "./ContainerPortList";
-import type { ContainerPortInfo } from "../ResourceNode";
+import type { ContainerPortInfo } from "../types";
 
 interface PodBoxProps {
     name: string;
@@ -37,7 +37,7 @@ export function PodBox({ name, labels, containerPorts, serviceSelectors, targetP
                         )}
                         {podIps && podIps.length > 0 && <MetadataItem label="ips" value={podIps} />}
                     </CompactMetadataRow>
-                    
+
                     {labels && Object.keys(labels).length > 0 && (
                         <MetadataRow icon="labels" alignItems="start">
                             <div className="flex-1 text-slate-600 font-medium">

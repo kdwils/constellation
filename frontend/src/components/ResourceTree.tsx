@@ -1,10 +1,10 @@
 import { useState } from "react";
-import type { ResourceNode, ContainerPortInfo } from "./ResourceNode";
-import { NamespaceHeader } from "./components/NamespaceHeader";
-import { ServiceBox } from "./components/Service";
-import { PodBox } from "./components/Pod";
-import { HttpRouteBox } from "./components/HttpRoute";
-import { IngressBox } from "./components/Ingress";
+import type { ResourceNode, ContainerPortInfo } from "../types";
+import { NamespaceHeader } from "./NamespaceHeader";
+import { ServiceBox } from "./Service";
+import { PodBox } from "./Pod";
+import { HttpRouteBox } from "./HttpRoute";
+import { IngressBox } from "./Ingress";
 
 interface ResourceTreeProps {
     nodes: ResourceNode[];
@@ -97,7 +97,7 @@ function ResourceNodeItem({ node, level = 0, serviceSelectors, targetPorts, targ
 
     if (node.kind === "Service") {
         const isTargetedByRoute = backendRefs?.includes(node.name) || false;
-        
+
         const childContainerPorts: ContainerPortInfo[] = [];
         if (node.relatives) {
             for (const childNode of node.relatives) {
@@ -106,7 +106,7 @@ function ResourceNodeItem({ node, level = 0, serviceSelectors, targetPorts, targ
                 }
             }
         }
-        
+
         return (
             <div className="space-y-2">
                 <ServiceBox name={node.name} selectors={node.selectors} portMappings={node.port_mappings} isTargetedByRoute={isTargetedByRoute} serviceType={node.service_type} clusterIps={node.cluster_ips} externalIps={node.external_ips} childContainerPorts={childContainerPorts} />
@@ -120,15 +120,15 @@ function ResourceNodeItem({ node, level = 0, serviceSelectors, targetPorts, targ
     if (node.kind === "Pod") {
         return (
             <div className="space-y-2">
-                <PodBox 
-                    name={node.name} 
-                    labels={node.labels} 
+                <PodBox
+                    name={node.name}
+                    labels={node.labels}
                     containerPorts={node.container_ports}
-                    serviceSelectors={serviceSelectors} 
+                    serviceSelectors={serviceSelectors}
                     targetPorts={targetPorts}
                     targetPortNames={targetPortNames}
-                    phase={node.phase} 
-                    podIps={node.pod_ips} 
+                    phase={node.phase}
+                    podIps={node.pod_ips}
                 />
                 {node.relatives && node.relatives.map((childNode) => (
                     <ResourceNodeItem key={childNode.name} node={childNode} level={level + 1} serviceSelectors={serviceSelectors} targetPorts={targetPorts} targetPortNames={targetPortNames} backendRefs={backendRefs} />
