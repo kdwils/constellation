@@ -12,7 +12,7 @@ use axum::{
 use futures::{Stream, stream};
 use serde::Serialize;
 use std::convert::Infallible;
-use tokio_stream::{StreamExt, wrappers::BroadcastStream};
+use tokio_stream::StreamExt;
 use tower_http::services::{ServeDir, ServeFile};
 
 #[derive(Serialize)]
@@ -56,38 +56,41 @@ async fn state_stream(
 
     let initial_event = stream::once(async { Ok(Event::default().data(initial_json)) });
 
-    let app_state_for_stream = app_state.clone();
-    let update_stream = BroadcastStream::new(rx).then(move |result| {
-        let app_state = app_state_for_stream.clone();
-        async move {
-            match result {
+    let update_stream = async_stream::stream! {
+        let mut rx = rx;
+        loop {
+            match rx.recv().await {
                 Ok(mut state) => {
                     state.sort_by(|a, b| a.name.cmp(&b.name));
                     match serde_json::to_string(&state) {
-                        Ok(json) => Ok(Event::default().data(json)),
+                        Ok(json) => yield Ok(Event::default().data(json)),
                         Err(err) => {
                             tracing::warn!("Failed to serialize state for SSE: {}", err);
-                            Ok(Event::default().data("{\"error\":\"serialization_failed\"}"))
+                            yield Ok(Event::default().data("{\"error\":\"serialization_failed\"}"));
                         }
                     }
                 }
-                Err(e) => {
-                    tracing::info!("stream error: {}", e);
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    tracing::debug!("Stream lagged by {} messages, sending current state", n);
                     let hierarchy = app_state.hierarchy.read().await;
                     let mut sorted_hierarchy = hierarchy.clone();
                     sorted_hierarchy.sort_by(|a, b| a.name.cmp(&b.name));
 
                     match serde_json::to_string(&sorted_hierarchy) {
-                        Ok(json) => Ok(Event::default().data(json)),
+                        Ok(json) => yield Ok(Event::default().data(json)),
                         Err(err) => {
                             tracing::warn!("Failed to serialize current state after lag: {}", err);
-                            Ok(Event::default().data("{\"error\":\"serialization_failed\"}"))
+                            yield Ok(Event::default().data("{\"error\":\"serialization_failed\"}"));
                         }
                     }
                 }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                    tracing::error!("Broadcast channel closed, ending SSE stream");
+                    break;
+                }
             }
         }
-    });
+    };
 
     let combined_stream = initial_event.chain(update_stream);
     Sse::new(combined_stream).keep_alive(KeepAlive::default())
