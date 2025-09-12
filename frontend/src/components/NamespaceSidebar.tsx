@@ -1,6 +1,7 @@
 import type { ResourceNode } from "../types";
 import { ViewModeDropdown } from "./ViewModeDropdown";
 import { SidebarItem } from "./SidebarItem";
+import { extractGroups, calculateNamespaceStats, calculateResourceCollectionStats } from "../utils/resourceStats";
 
 interface NamespaceSidebarProps {
     namespaces: ResourceNode[];
@@ -12,126 +13,6 @@ interface NamespaceSidebarProps {
     onGroupSelect: (group: string) => void;
 }
 
-interface NamespaceStats {
-    pods: number;
-    healthyPods: number;
-    hasExternalRoutes: boolean;
-}
-
-interface GroupInfo {
-    name: string;
-    resources: ResourceNode[];
-}
-
-interface GroupStats {
-    totalResources: number;
-    pods: number;
-    healthyPods: number;
-    hasExternalRoutes: boolean;
-    namespaces: Set<string>;
-}
-
-function getNamespaceStats(namespace: ResourceNode): NamespaceStats {
-    let pods = 0;
-    let healthyPods = 0;
-    let hasExternalRoutes = false;
-
-    function traverseResources(nodes: ResourceNode[]) {
-        for (const node of nodes) {
-            switch (node.kind) {
-                case "Ingress":
-                case "HTTPRoute":
-                    hasExternalRoutes = true;
-                    break;
-                case "Pod":
-                    pods++;
-                    if (node.phase === "Running") {
-                        healthyPods++;
-                    }
-                    break;
-            }
-
-            if (node.relatives) {
-                traverseResources(node.relatives);
-            }
-        }
-    }
-
-    if (namespace.relatives) {
-        traverseResources(namespace.relatives);
-    }
-
-    return { pods, healthyPods, hasExternalRoutes };
-}
-
-function extractGroups(namespaces: ResourceNode[]): GroupInfo[] {
-    const groups = new Map<string, ResourceNode[]>();
-
-    // Collect all resources from all namespaces
-    for (const namespace of namespaces) {
-        if (namespace.relatives) {
-            for (const resource of namespace.relatives) {
-                if (resource.group) {
-                    // When we find a resource with a group annotation, include its full hierarchy
-                    const resourceWithNamespace = {
-                        ...resource,
-                        namespace: namespace.name,
-                        // Preserve all relatives (children) even if they don't have group annotations
-                        relatives: resource.relatives
-                    };
-
-                    if (!groups.has(resource.group)) {
-                        groups.set(resource.group, []);
-                    }
-                    groups.get(resource.group)!.push(resourceWithNamespace);
-                }
-            }
-        }
-    }
-
-    // Convert to array and sort by group name
-    return Array.from(groups.entries())
-        .map(([name, resources]) => ({ name, resources }))
-        .sort((a, b) => a.name.localeCompare(b.name));
-}
-
-function getGroupStats(group: GroupInfo): GroupStats {
-    let totalResources = group.resources.length;
-    let pods = 0;
-    let healthyPods = 0;
-    let hasExternalRoutes = false;
-    const namespaces = new Set<string>();
-
-    function traverseResources(nodes: ResourceNode[]) {
-        for (const node of nodes) {
-            if (node.namespace) {
-                namespaces.add(node.namespace);
-            }
-
-            switch (node.kind) {
-                case "Ingress":
-                case "HTTPRoute":
-                    hasExternalRoutes = true;
-                    break;
-                case "Pod":
-                    pods++;
-                    if (node.phase === "Running") {
-                        healthyPods++;
-                    }
-                    break;
-            }
-
-            if (node.relatives) {
-                totalResources += node.relatives.length;
-                traverseResources(node.relatives);
-            }
-        }
-    }
-
-    traverseResources(group.resources);
-
-    return { totalResources, pods, healthyPods, hasExternalRoutes, namespaces };
-}
 
 export function NamespaceSidebar({ namespaces, selectedNamespace, onNamespaceSelect, viewMode, onViewModeChange, selectedGroup, onGroupSelect }: NamespaceSidebarProps) {
     const groups = extractGroups(namespaces);
@@ -160,7 +41,7 @@ export function NamespaceSidebar({ namespaces, selectedNamespace, onNamespaceSel
                 {viewMode === 'namespace' ? (
                     <div className="p-2">
                         {namespaces.map((namespace) => {
-                            const stats = getNamespaceStats(namespace);
+                            const stats = calculateNamespaceStats(namespace);
                             const isSelected = selectedNamespace === namespace.name;
 
                             return (
@@ -170,7 +51,7 @@ export function NamespaceSidebar({ namespaces, selectedNamespace, onNamespaceSel
                                     isSelected={isSelected}
                                     onClick={() => onNamespaceSelect(namespace.name)}
                                     stats={{
-                                        pods: stats.pods,
+                                        pods: stats.totalPods,
                                         healthyPods: stats.healthyPods
                                     }}
                                 />
@@ -180,7 +61,7 @@ export function NamespaceSidebar({ namespaces, selectedNamespace, onNamespaceSel
                 ) : (
                     <div className="p-2">
                         {groups.length > 0 ? groups.map((group) => {
-                            const stats = getGroupStats(group);
+                            const stats = calculateResourceCollectionStats(group.resources);
                             const isSelected = selectedGroup === group.name;
 
                             return (
@@ -190,7 +71,7 @@ export function NamespaceSidebar({ namespaces, selectedNamespace, onNamespaceSel
                                     isSelected={isSelected}
                                     onClick={() => onGroupSelect(group.name)}
                                     stats={{
-                                        pods: stats.pods,
+                                        pods: stats.totalPods,
                                         healthyPods: stats.healthyPods
                                     }}
                                 />
