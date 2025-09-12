@@ -12,7 +12,7 @@ export default function Dashboard() {
     const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
 
     useEffect(() => {
-        let eventSource: EventSource | null = null;
+        let eventSource: WebSocket | null = null;
         let retryTimeout: ReturnType<typeof setTimeout>;
         let healthCheckTimeout: ReturnType<typeof setTimeout>;
 
@@ -27,7 +27,7 @@ export default function Dashboard() {
 
         const createConnection = async () => {
             const isHealthy = await checkHealth();
-            
+
             if (!isHealthy) {
                 setError('Server not ready. Waiting for Kubernetes resources...');
                 healthCheckTimeout = setTimeout(() => {
@@ -37,7 +37,10 @@ export default function Dashboard() {
                 return;
             }
 
-            eventSource = new EventSource('/state/stream');
+            // Create WebSocket connection
+            // const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `ws://${window.location.host}/state/stream`;
+            eventSource = new WebSocket(wsUrl);
 
             eventSource.onopen = () => {
                 setConnectionStatus('connected');
@@ -55,13 +58,13 @@ export default function Dashboard() {
                         setSelectedNamespace(newData[0].name);
                     }
                 } catch (err) {
-                    console.error('Failed to parse SSE data:', err);
+                    console.error('Failed to parse WebSocket data:', err);
                     setError('Failed to parse server data');
                 }
             };
 
             eventSource.onerror = (err) => {
-                console.error('SSE connection error:', err);
+                console.error('WebSocket connection error:', err);
                 setConnectionStatus('disconnected');
                 setError('Connection to server lost. Retrying...');
                 eventSource?.close();
@@ -71,6 +74,20 @@ export default function Dashboard() {
                     setConnectionStatus('connecting');
                     createConnection();
                 }, 5000);
+            };
+
+            eventSource.onclose = () => {
+                console.log('WebSocket connection closed');
+                if (connectionStatus !== 'disconnected') {
+                    setConnectionStatus('disconnected');
+                    setError('Connection to server lost. Retrying...');
+
+                    // Retry connection after delay
+                    retryTimeout = setTimeout(() => {
+                        setConnectionStatus('connecting');
+                        createConnection();
+                    }, 5000);
+                }
             };
         };
 

@@ -5,7 +5,7 @@ version = "0.1.0"
 
 [dependencies]
 async-stream = "0.3"
-axum = {version = "0.8.4", features = ["macros"]}
+axum = {version = "0.8.4", features = ["macros", "ws"]}
 chrono = "0.4.41"
 futures = "0.3.31"
 gateway-api = "0.16.0"
