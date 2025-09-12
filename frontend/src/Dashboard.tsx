@@ -38,8 +38,8 @@ export default function Dashboard() {
             }
 
             // Create WebSocket connection
-            // const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const wsUrl = `ws://${window.location.host}/state/stream`;
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}/state/stream`;
             eventSource = new WebSocket(wsUrl);
 
             eventSource.onopen = () => {
