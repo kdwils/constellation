@@ -133,9 +133,9 @@ async fn handle_socket(socket: WebSocket, app_state: AppState) {
     });
 
     let mut recv_task = tokio::spawn(async move {
-while let Some(Ok(Message::Close(_))) = receiver.next().await {
-    tracing::info!("WebSocket client sent close message");
-}
+        while let Some(Ok(Message::Close(_))) = receiver.next().await {
+            tracing::info!("WebSocket client sent close message");
+        }
     });
 
     tokio::select! {
