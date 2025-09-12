@@ -49,12 +49,16 @@ export default function Dashboard() {
             eventSource.onmessage = (event) => {
                 try {
                     const newData = JSON.parse(event.data);
+
                     setData(newData);
                     setLoading(false);
 
-                    if (newData.length > 0 && (!selectedNamespace || !newData.find((ns: ResourceNode) => ns.name === selectedNamespace))) {
-                        setSelectedNamespace(newData[0].name);
-                    }
+                    setSelectedNamespace(current => {
+                        if (newData.length > 0 && !current) {
+                            return newData[0].name;
+                        }
+                        return current;
+                    });
                 } catch (err) {
                     console.error('Failed to parse WebSocket data:', err);
                     setError('Failed to parse server data');
@@ -74,12 +78,10 @@ export default function Dashboard() {
             };
 
             eventSource.onclose = () => {
-                console.log('WebSocket connection closed');
                 if (connectionStatus !== 'disconnected') {
                     setConnectionStatus('disconnected');
                     setError('Connection to server lost. Retrying...');
 
-                    // Retry connection after delay
                     retryTimeout = setTimeout(() => {
                         setConnectionStatus('connecting');
                         createConnection();
