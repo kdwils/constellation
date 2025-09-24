@@ -1,18 +1,22 @@
-FROM node:22.19.0 AS frontend-builder
-WORKDIR /app/frontend
-COPY frontend/package.json frontend/package-lock.json* ./
-RUN npm ci
-COPY frontend/ ./
-RUN npm run build
+# Build the manager binary
+FROM golang:1.24 AS builder
+ARG TARGETOS
+ARG TARGETARCH
 
-FROM rust:1.89.0-bookworm AS backend-builder
-WORKDIR /app
+WORKDIR /workspace
+
+COPY go.mod go.mod
+COPY go.sum go.sum
+
+RUN go mod download
+
 COPY . .
-RUN cargo build --release
 
-FROM gcr.io/distroless/cc-debian12:nonroot
-WORKDIR /app
-COPY --from=backend-builder /app/target/release/constellation /app/constellation
-COPY --from=frontend-builder /app/frontend/dist ./frontend/dist
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o manager cmd/main.go
 
-ENTRYPOINT ["/app/constellation"]
+FROM gcr.io/distroless/static:nonroot
+WORKDIR /
+COPY --from=builder /workspace/manager .
+USER 65532:65532
+
+ENTRYPOINT ["/manager"]
