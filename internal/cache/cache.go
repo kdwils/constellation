@@ -50,7 +50,7 @@ func (c *Cache[T]) Size() int {
 func (c *Cache[T]) Keys() []string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	
+
 	keys := make([]string, 0, len(c.entries))
 	for key := range c.entries {
 		keys = append(keys, key)
@@ -62,7 +62,7 @@ func (c *Cache[T]) Keys() []string {
 func (c *Cache[T]) List() []T {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	
+
 	values := make([]T, 0, len(c.entries))
 	for _, value := range c.entries {
 		values = append(values, value)

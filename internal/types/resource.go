@@ -26,57 +26,57 @@ type ContainerPortInfo struct {
 }
 
 type ResourceMetadata struct {
-	Hostnames         []string            `json:"hostnames,omitempty"`
-	Selectors         map[string]string   `json:"selectors,omitempty"`
-	Ports             []int32             `json:"ports,omitempty"`
-	PortMappings      []string            `json:"port_mappings,omitempty"`
-	TargetPorts       []int32             `json:"target_ports,omitempty"`
-	TargetPortNames   []string            `json:"target_port_names,omitempty"`
-	Labels            map[string]string   `json:"labels,omitempty"`
-	Phase             *string             `json:"phase,omitempty"`
-	BackendRefs       []string            `json:"backend_refs,omitempty"`
-	ServiceType       *string             `json:"service_type,omitempty"`
-	ClusterIPs        []string            `json:"cluster_ips,omitempty"`
-	ExternalIPs       []string            `json:"external_ips,omitempty"`
-	PodIPs            []string            `json:"pod_ips,omitempty"`
-	ContainerPorts    []ContainerPortInfo `json:"container_ports,omitempty"`
-	Group             string              `json:"group,omitempty"`
-	DisplayName       string              `json:"display_name,omitempty"`
-	Ignore            bool                `json:"ignore,omitempty"`
+	Hostnames       []string            `json:"hostnames,omitempty"`
+	Selectors       map[string]string   `json:"selectors,omitempty"`
+	Ports           []int32             `json:"ports,omitempty"`
+	PortMappings    []string            `json:"port_mappings,omitempty"`
+	TargetPorts     []int32             `json:"target_ports,omitempty"`
+	TargetPortNames []string            `json:"target_port_names,omitempty"`
+	Labels          map[string]string   `json:"labels,omitempty"`
+	Phase           *string             `json:"phase,omitempty"`
+	BackendRefs     []string            `json:"backend_refs,omitempty"`
+	ServiceType     *string             `json:"service_type,omitempty"`
+	ClusterIPs      []string            `json:"cluster_ips,omitempty"`
+	ExternalIPs     []string            `json:"external_ips,omitempty"`
+	PodIPs          []string            `json:"pod_ips,omitempty"`
+	ContainerPorts  []ContainerPortInfo `json:"container_ports,omitempty"`
+	Group           string              `json:"group,omitempty"`
+	DisplayName     string              `json:"display_name,omitempty"`
+	Ignore          bool                `json:"ignore,omitempty"`
 }
 
 type Resource struct {
-	Kind      ResourceKind      `json:"kind"`
-	Name      string            `json:"name"`
-	Namespace string            `json:"namespace"`
-	Metadata  ResourceMetadata  `json:"metadata"`
-	CreatedAt metav1.Time       `json:"created_at"`
+	Kind      ResourceKind     `json:"kind"`
+	Name      string           `json:"name"`
+	Namespace string           `json:"namespace"`
+	Metadata  ResourceMetadata `json:"metadata"`
+	CreatedAt metav1.Time      `json:"created_at"`
 }
 
 // HierarchyNode represents a resource with its child resources
 type HierarchyNode struct {
-	Kind      ResourceKind      `json:"kind"`
-	Name      string            `json:"name"`
-	Namespace *string           `json:"namespace,omitempty"`
-	Relatives []HierarchyNode   `json:"relatives,omitempty"`
+	Kind      ResourceKind    `json:"kind"`
+	Name      string          `json:"name"`
+	Namespace *string         `json:"namespace,omitempty"`
+	Relatives []HierarchyNode `json:"relatives,omitempty"`
 	// Embed all metadata fields directly
-	Hostnames         []string            `json:"hostnames,omitempty"`
-	Selectors         map[string]string   `json:"selectors,omitempty"`
-	Ports             []int32             `json:"ports,omitempty"`
-	PortMappings      []string            `json:"port_mappings,omitempty"`
-	TargetPorts       []int32             `json:"target_ports,omitempty"`
-	TargetPortNames   []string            `json:"target_port_names,omitempty"`
-	ContainerPorts    []ContainerPortInfo `json:"container_ports,omitempty"`
-	Labels            map[string]string   `json:"labels,omitempty"`
-	Phase             *string             `json:"phase,omitempty"`
-	BackendRefs       []string            `json:"backend_refs,omitempty"`
-	ServiceType       *string             `json:"service_type,omitempty"`
-	ClusterIPs        []string            `json:"cluster_ips,omitempty"`
-	ExternalIPs       []string            `json:"external_ips,omitempty"`
-	PodIPs            []string            `json:"pod_ips,omitempty"`
-	Group             string              `json:"group,omitempty"`
-	DisplayName       string              `json:"display_name,omitempty"`
-	Ignore            bool                `json:"ignore,omitempty"`
+	Hostnames       []string            `json:"hostnames,omitempty"`
+	Selectors       map[string]string   `json:"selectors,omitempty"`
+	Ports           []int32             `json:"ports,omitempty"`
+	PortMappings    []string            `json:"port_mappings,omitempty"`
+	TargetPorts     []int32             `json:"target_ports,omitempty"`
+	TargetPortNames []string            `json:"target_port_names,omitempty"`
+	ContainerPorts  []ContainerPortInfo `json:"container_ports,omitempty"`
+	Labels          map[string]string   `json:"labels,omitempty"`
+	Phase           *string             `json:"phase,omitempty"`
+	BackendRefs     []string            `json:"backend_refs,omitempty"`
+	ServiceType     *string             `json:"service_type,omitempty"`
+	ClusterIPs      []string            `json:"cluster_ips,omitempty"`
+	ExternalIPs     []string            `json:"external_ips,omitempty"`
+	PodIPs          []string            `json:"pod_ips,omitempty"`
+	Group           string              `json:"group,omitempty"`
+	DisplayName     string              `json:"display_name,omitempty"`
+	Ignore          bool                `json:"ignore,omitempty"`
 }
 
 type ClusterState struct {
@@ -85,7 +85,6 @@ type ClusterState struct {
 }
 
 type Connection struct {
-	
 	Source string `json:"source"`
 	Target string `json:"target"`
 }

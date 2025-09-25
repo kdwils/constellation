@@ -63,43 +63,36 @@ type HTTPRouteReconciler struct {
 	BaseReconciler
 }
 
+// newBaseReconciler creates a new BaseReconciler with common initialization
+func newBaseReconciler(mgr ctrl.Manager, stateManager *StateManager) BaseReconciler {
+	return BaseReconciler{
+		Client:       mgr.GetClient(),
+		Scheme:       mgr.GetScheme(),
+		stateManager: stateManager,
+	}
+}
+
 func NewNamespaceReconciler(mgr ctrl.Manager, stateManager *StateManager) *NamespaceReconciler {
 	return &NamespaceReconciler{
-		BaseReconciler: BaseReconciler{
-			Client:       mgr.GetClient(),
-			Scheme:       mgr.GetScheme(),
-			stateManager: stateManager,
-		},
+		BaseReconciler: newBaseReconciler(mgr, stateManager),
 	}
 }
 
 func NewServiceReconciler(mgr ctrl.Manager, stateManager *StateManager) *ServiceReconciler {
 	return &ServiceReconciler{
-		BaseReconciler: BaseReconciler{
-			Client:       mgr.GetClient(),
-			Scheme:       mgr.GetScheme(),
-			stateManager: stateManager,
-		},
+		BaseReconciler: newBaseReconciler(mgr, stateManager),
 	}
 }
 
 func NewPodReconciler(mgr ctrl.Manager, stateManager *StateManager) *PodReconciler {
 	return &PodReconciler{
-		BaseReconciler: BaseReconciler{
-			Client:       mgr.GetClient(),
-			Scheme:       mgr.GetScheme(),
-			stateManager: stateManager,
-		},
+		BaseReconciler: newBaseReconciler(mgr, stateManager),
 	}
 }
 
 func NewHTTPRouteReconciler(mgr ctrl.Manager, stateManager *StateManager) *HTTPRouteReconciler {
 	return &HTTPRouteReconciler{
-		BaseReconciler: BaseReconciler{
-			Client:       mgr.GetClient(),
-			Scheme:       mgr.GetScheme(),
-			stateManager: stateManager,
-		},
+		BaseReconciler: newBaseReconciler(mgr, stateManager),
 	}
 }
 
@@ -253,7 +246,7 @@ func (sm *StateManager) GetHierarchy() []types.HierarchyNode {
 func (sm *StateManager) Subscribe() chan []types.HierarchyNode {
 	sm.subMu.Lock()
 	defer sm.subMu.Unlock()
-	
+
 	ch := make(chan []types.HierarchyNode, 10)
 	sm.subscribers[ch] = true
 	return ch
@@ -263,7 +256,7 @@ func (sm *StateManager) Subscribe() chan []types.HierarchyNode {
 func (sm *StateManager) Unsubscribe(ch chan []types.HierarchyNode) {
 	sm.subMu.Lock()
 	defer sm.subMu.Unlock()
-	
+
 	delete(sm.subscribers, ch)
 	close(ch)
 }
@@ -274,18 +267,15 @@ func (sm *StateManager) broadcastUpdate() {
 	currentState := make([]types.HierarchyNode, len(sm.hierarchy))
 	copy(currentState, sm.hierarchy)
 	sm.mu.RUnlock()
-	
+
 	sm.subMu.RLock()
 	defer sm.subMu.RUnlock()
-	
+
 	for subscriber := range sm.subscribers {
 		subscriber <- currentState
 	}
-	
-	select {
-	case sm.updateChan <- true:
-	default:
-	}
+
+	sm.updateChan <- true
 }
 
 // Helper functions to check if a resource should be included
@@ -294,7 +284,11 @@ func shouldIncludePod(pod *corev1.Pod) bool {
 		return false
 	}
 
-	if pod.Status.Phase == corev1.PodFailed || pod.Status.Phase == corev1.PodSucceeded {
+	if pod.Status.Phase == corev1.PodFailed {
+		return false
+	}
+
+	if pod.Status.Phase == corev1.PodSucceeded {
 		return false
 	}
 
@@ -446,7 +440,7 @@ func extractGroupFromAnnotations(annotations map[string]string) string {
 	return annotations["constellation.kyledev.co/group"]
 }
 
-// extractDisplayNameFromAnnotations extracts display name from constellation annotations  
+// extractDisplayNameFromAnnotations extracts display name from constellation annotations
 func extractDisplayNameFromAnnotations(annotations map[string]string) string {
 	if annotations == nil {
 		return ""
@@ -467,7 +461,7 @@ func extractServiceMetadata(svc *corev1.Service) types.ResourceMetadata {
 		Labels:    svc.Labels,
 		Selectors: svc.Spec.Selector,
 	}
-	
+
 	metadata.Group = extractGroupFromAnnotations(svc.Annotations)
 	metadata.DisplayName = extractDisplayNameFromAnnotations(svc.Annotations)
 	metadata.Ignore = shouldIgnoreResource(svc.Annotations)
@@ -756,7 +750,6 @@ func (sm *StateManager) removeHTTPRoute(name, namespace string) {
 	}
 }
 
-
 // Pure helper functions that don't modify state
 
 // findHTTPRouteForService returns the index of HTTPRoute that references the service, or -1
@@ -997,24 +990,22 @@ func (sm *StateManager) addPodToMatchingServiceInNode(node *types.HierarchyNode,
 		if node.Namespace != nil {
 			serviceNamespace = *node.Namespace
 		}
-		
+
 		if serviceNamespace == pod.Namespace && labelsMatch(node.Selectors, pod.Labels) {
-			// Remove pod if it already exists (to avoid duplicates)
 			node.Relatives = slices.DeleteFunc(node.Relatives, func(child types.HierarchyNode) bool {
 				return child.Kind == types.ResourceKindPod && child.Name == pod.Name
 			})
-			// Add the pod to this service
+
 			node.Relatives = append(node.Relatives, podNode)
 			return true
 		}
 	}
 
-	// Recursively check child nodes
 	for i := range node.Relatives {
 		if sm.addPodToMatchingServiceInNode(&node.Relatives[i], pod, podNode) {
 			return true
 		}
 	}
-	
+
 	return false
 }

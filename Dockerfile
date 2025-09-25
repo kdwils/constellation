@@ -1,3 +1,10 @@
+FROM node:22.19.0 AS frontend-builder
+WORKDIR /app/frontend
+COPY frontend/package.json frontend/package-lock.json* ./
+RUN npm ci
+COPY frontend/ ./
+RUN npm run build
+
 # Build the manager binary
 FROM golang:1.24 AS builder
 ARG TARGETOS
@@ -17,6 +24,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o ma
 FROM gcr.io/distroless/static:nonroot
 WORKDIR /
 COPY --from=builder /workspace/manager .
+COPY --from=frontend-builder /app/frontend/dist ./frontend/dist
 USER 65532:65532
 
 ENTRYPOINT ["/manager"]
