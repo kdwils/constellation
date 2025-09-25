@@ -55,11 +55,10 @@ type Resource struct {
 
 // HierarchyNode represents a resource with its child resources
 type HierarchyNode struct {
-	Kind      ResourceKind    `json:"kind"`
-	Name      string          `json:"name"`
-	Namespace *string         `json:"namespace,omitempty"`
-	Relatives []HierarchyNode `json:"relatives,omitempty"`
-	// Embed all metadata fields directly
+	Kind            ResourceKind        `json:"kind"`
+	Name            string              `json:"name"`
+	Namespace       *string             `json:"namespace,omitempty"`
+	Relatives       []HierarchyNode     `json:"relatives,omitempty"`
 	Hostnames       []string            `json:"hostnames,omitempty"`
 	Selectors       map[string]string   `json:"selectors,omitempty"`
 	Ports           []int32             `json:"ports,omitempty"`
