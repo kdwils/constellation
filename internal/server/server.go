@@ -88,7 +88,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	fmt.Printf("WebSocket connection established\n")
-	
+
 	stateChan := s.stateProvider.Subscribe()
 	defer s.stateProvider.Unsubscribe(stateChan)
 
