@@ -12,7 +12,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/log"
 	gatewayv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
 
 	"github.com/kdwils/constellation/internal/types"
@@ -43,25 +42,6 @@ type BaseReconciler struct {
 	stateManager *StateManager
 }
 
-// NamespaceReconciler reconciles Namespace objects
-type NamespaceReconciler struct {
-	BaseReconciler
-}
-
-// ServiceReconciler reconciles Service objects
-type ServiceReconciler struct {
-	BaseReconciler
-}
-
-// PodReconciler reconciles Pod objects
-type PodReconciler struct {
-	BaseReconciler
-}
-
-// HTTPRouteReconciler reconciles HTTPRoute objects
-type HTTPRouteReconciler struct {
-	BaseReconciler
-}
 
 // newBaseReconciler creates a new BaseReconciler with common initialization
 func newBaseReconciler(mgr ctrl.Manager, stateManager *StateManager) BaseReconciler {
@@ -72,155 +52,8 @@ func newBaseReconciler(mgr ctrl.Manager, stateManager *StateManager) BaseReconci
 	}
 }
 
-func NewNamespaceReconciler(mgr ctrl.Manager, stateManager *StateManager) *NamespaceReconciler {
-	return &NamespaceReconciler{
-		BaseReconciler: newBaseReconciler(mgr, stateManager),
-	}
-}
 
-func NewServiceReconciler(mgr ctrl.Manager, stateManager *StateManager) *ServiceReconciler {
-	return &ServiceReconciler{
-		BaseReconciler: newBaseReconciler(mgr, stateManager),
-	}
-}
 
-func NewPodReconciler(mgr ctrl.Manager, stateManager *StateManager) *PodReconciler {
-	return &PodReconciler{
-		BaseReconciler: newBaseReconciler(mgr, stateManager),
-	}
-}
-
-func NewHTTPRouteReconciler(mgr ctrl.Manager, stateManager *StateManager) *HTTPRouteReconciler {
-	return &HTTPRouteReconciler{
-		BaseReconciler: newBaseReconciler(mgr, stateManager),
-	}
-}
-
-// SetupWithManager sets up each controller with the Manager
-func (r *NamespaceReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	return ctrl.NewControllerManagedBy(mgr).
-		For(&corev1.Namespace{}).
-		Complete(r)
-}
-
-func (r *ServiceReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	return ctrl.NewControllerManagedBy(mgr).
-		For(&corev1.Service{}).
-		Complete(r)
-}
-
-func (r *PodReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	return ctrl.NewControllerManagedBy(mgr).
-		For(&corev1.Pod{}).
-		Complete(r)
-}
-
-func (r *HTTPRouteReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	return ctrl.NewControllerManagedBy(mgr).
-		For(&gatewayv1beta1.HTTPRoute{}).
-		Complete(r)
-}
-
-// Namespace reconciler
-func (r *NamespaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	logger := log.FromContext(ctx)
-
-	var namespace corev1.Namespace
-	if err := r.Get(ctx, req.NamespacedName, &namespace); err != nil {
-		if client.IgnoreNotFound(err) == nil {
-			r.stateManager.removeNamespace(req.Name)
-			r.stateManager.broadcastUpdate()
-			return ctrl.Result{}, nil
-		}
-		logger.Error(err, "Failed to get namespace")
-		return ctrl.Result{}, err
-	}
-
-	r.stateManager.updateNamespace(&namespace)
-	r.stateManager.broadcastUpdate()
-
-	return ctrl.Result{}, nil
-}
-
-// Service reconciler
-func (r *ServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	logger := log.FromContext(ctx)
-
-	var service corev1.Service
-	if err := r.Get(ctx, req.NamespacedName, &service); err != nil {
-		if client.IgnoreNotFound(err) == nil {
-			r.stateManager.removeService(req.Name, req.Namespace)
-			r.stateManager.broadcastUpdate()
-			return ctrl.Result{}, nil
-		}
-		logger.Error(err, "Failed to get service")
-		return ctrl.Result{}, err
-	}
-
-	var pods corev1.PodList
-	if err := r.List(ctx, &pods, client.InNamespace(req.Namespace)); err != nil {
-		logger.Error(err, "Failed to list pods")
-		return ctrl.Result{}, err
-	}
-
-	r.stateManager.updateService(&service, pods.Items)
-	r.stateManager.broadcastUpdate()
-
-	return ctrl.Result{}, nil
-}
-
-func (r *PodReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	logger := log.FromContext(ctx)
-
-	var pod corev1.Pod
-	if err := r.Get(ctx, req.NamespacedName, &pod); err != nil {
-		if client.IgnoreNotFound(err) == nil {
-			r.stateManager.removePod(req.Name, req.Namespace)
-			r.stateManager.broadcastUpdate()
-			return ctrl.Result{}, nil
-		}
-		logger.Error(err, "Failed to get pod")
-		return ctrl.Result{}, err
-	}
-
-	r.stateManager.updatePod(&pod)
-	r.stateManager.broadcastUpdate()
-
-	return ctrl.Result{}, nil
-}
-
-// HTTPRoute reconciler
-func (r *HTTPRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	logger := log.FromContext(ctx)
-
-	var httpRoute gatewayv1beta1.HTTPRoute
-	if err := r.Get(ctx, req.NamespacedName, &httpRoute); err != nil {
-		if client.IgnoreNotFound(err) == nil {
-			r.stateManager.removeHTTPRoute(req.Name, req.Namespace)
-			r.stateManager.broadcastUpdate()
-			return ctrl.Result{}, nil
-		}
-		logger.Error(err, "Failed to get httproute")
-		return ctrl.Result{}, err
-	}
-
-	var services corev1.ServiceList
-	if err := r.List(ctx, &services, client.InNamespace(req.Namespace)); err != nil {
-		logger.Error(err, "Failed to list services")
-		return ctrl.Result{}, err
-	}
-
-	var pods corev1.PodList
-	if err := r.List(ctx, &pods, client.InNamespace(req.Namespace)); err != nil {
-		logger.Error(err, "Failed to list pods")
-		return ctrl.Result{}, err
-	}
-
-	r.stateManager.updateHTTPRoute(&httpRoute, services.Items, pods.Items)
-	r.stateManager.broadcastUpdate()
-
-	return ctrl.Result{}, nil
-}
 
 func labelsMatch(selectors, labels map[string]string) bool {
 	if selectors == nil || labels == nil {
