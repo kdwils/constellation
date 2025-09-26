@@ -21,6 +21,7 @@ export default function Dashboard() {
         const wsUrl = `${protocol}//${window.location.host}/ws`;
         const ws = new WebSocket(wsUrl);
 
+
         ws.onopen = () => {
             setConnectionStatus('connected');
             setError(null);
@@ -28,6 +29,12 @@ export default function Dashboard() {
         };
 
         ws.onmessage = (event) => {
+            // Handle ping messages from server (they arrive as empty message)
+            if (event.data === '') {
+                // Server sent a ping, browser automatically responds with pong
+                return;
+            }
+            
             try {
                 const newData = JSON.parse(event.data);
                 setData(newData);
