@@ -2,19 +2,44 @@ package controller
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"net/http"
 	"slices"
 	"sync"
 
+	"github.com/gorilla/websocket"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 	gatewayv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
 
 	"github.com/kdwils/constellation/internal/types"
+)
+
+type StateUpdateEvent struct {
+	Type      StateUpdateType
+	Namespace corev1.Namespace
+	Service   corev1.Service
+	Pod       corev1.Pod
+	HTTPRoute gatewayv1beta1.HTTPRoute
+	Pods      []corev1.Pod
+	Services  []corev1.Service
+	Name      string
+	Ns        string
+}
+
+type StateUpdateType int
+
+const (
+	NamespaceUpdate StateUpdateType = iota
+	NamespaceDelete
+	ServiceUpdate
+	ServiceDelete
+	PodUpdate
+	PodDelete
+	HTTPRouteUpdate
+	HTTPRouteDelete
 )
 
 // StateManager maintains the hierarchy state and serves it via HTTP
@@ -24,6 +49,7 @@ type StateManager struct {
 	subscribers map[chan []types.HierarchyNode]bool
 	subMu       sync.RWMutex
 	updateChan  chan bool
+	eventChan   chan StateUpdateEvent
 }
 
 // NewStateManager creates a new state manager
@@ -32,6 +58,7 @@ func NewStateManager(updateChan chan bool) *StateManager {
 		hierarchy:   make([]types.HierarchyNode, 0),
 		subscribers: make(map[chan []types.HierarchyNode]bool),
 		updateChan:  updateChan,
+		eventChan:   make(chan StateUpdateEvent, 100),
 	}
 }
 
@@ -42,7 +69,6 @@ type BaseReconciler struct {
 	stateManager *StateManager
 }
 
-
 // newBaseReconciler creates a new BaseReconciler with common initialization
 func newBaseReconciler(mgr ctrl.Manager, stateManager *StateManager) BaseReconciler {
 	return BaseReconciler{
@@ -51,9 +77,6 @@ func newBaseReconciler(mgr ctrl.Manager, stateManager *StateManager) BaseReconci
 		stateManager: stateManager,
 	}
 }
-
-
-
 
 func labelsMatch(selectors, labels map[string]string) bool {
 	if selectors == nil || labels == nil {
@@ -75,7 +98,222 @@ func (sm *StateManager) GetHierarchy() []types.HierarchyNode {
 	return append([]types.HierarchyNode(nil), sm.hierarchy...)
 }
 
-// Subscribe adds a channel to receive state updates
+// PushUpdate safely writes hierarchy to WebSocket connection while holding mutex
+func (sm *StateManager) Start(ctx context.Context) {
+	go sm.processUpdates(ctx)
+}
+
+func (sm *StateManager) processUpdates(ctx context.Context) {
+	for {
+		select {
+		case event := <-sm.eventChan:
+			sm.handleUpdate(event)
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+func (sm *StateManager) handleUpdate(event StateUpdateEvent) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	switch event.Type {
+	case NamespaceUpdate:
+		sm.processNamespaceUpdate(event.Namespace)
+	case NamespaceDelete:
+		sm.processNamespaceDelete(event.Name)
+	case ServiceUpdate:
+		sm.processServiceUpdate(event.Service, event.Pods)
+	case ServiceDelete:
+		for i := range sm.hierarchy {
+			removeNodeByKind(&sm.hierarchy[i], types.ResourceKindService, event.Name, event.Ns)
+		}
+	case PodUpdate:
+		sm.processPodUpdate(event.Pod)
+	case PodDelete:
+		for i := range sm.hierarchy {
+			removeNodeByKind(&sm.hierarchy[i], types.ResourceKindPod, event.Name, event.Ns)
+		}
+	case HTTPRouteUpdate:
+		sm.processHTTPRouteUpdate(event.HTTPRoute, event.Services, event.Pods)
+	case HTTPRouteDelete:
+		for i := range sm.hierarchy {
+			removeNodeByKind(&sm.hierarchy[i], types.ResourceKindHTTPRoute, event.Name, event.Ns)
+		}
+	}
+
+	sm.notifySubscribers()
+}
+
+func (sm *StateManager) notifySubscribers() {
+	sm.subMu.RLock()
+	defer sm.subMu.RUnlock()
+
+	for subscriber := range sm.subscribers {
+		select {
+		case subscriber <- nil:
+		default:
+		}
+	}
+
+	sm.updateChan <- true
+}
+
+func (sm *StateManager) processNamespaceUpdate(namespace corev1.Namespace) {
+	_, found := sm.findNamespaceIndex(namespace.Name)
+	if !found {
+		newNode := namespaceToHierarchyNode(namespace)
+		sm.hierarchy = append(sm.hierarchy, newNode)
+	}
+
+	slices.SortFunc(sm.hierarchy, compareNodesByName)
+}
+
+func (sm *StateManager) processNamespaceDelete(name string) {
+	sm.hierarchy = slices.DeleteFunc(sm.hierarchy, func(node types.HierarchyNode) bool {
+		return node.Kind == types.ResourceKindNamespace && node.Name == name
+	})
+}
+
+func (sm *StateManager) processServiceUpdate(service corev1.Service, pods []corev1.Pod) {
+	for i := range sm.hierarchy {
+		removeNodeByKind(&sm.hierarchy[i], types.ResourceKindService, service.Name, service.Namespace)
+	}
+
+	namespaceIndex, found := sm.findNamespaceIndex(service.Namespace)
+	if !found {
+		return
+	}
+
+	httpRouteIndex := findHTTPRouteForService(sm.hierarchy[namespaceIndex], service.Name)
+	serviceNode := createServiceNodeWithPods(service, pods)
+
+	if httpRouteIndex != -1 {
+		sm.hierarchy[namespaceIndex].Relatives[httpRouteIndex].Relatives = append(
+			sm.hierarchy[namespaceIndex].Relatives[httpRouteIndex].Relatives, serviceNode)
+		return
+	}
+
+	sm.hierarchy[namespaceIndex].Relatives = append(sm.hierarchy[namespaceIndex].Relatives, serviceNode)
+}
+
+func (sm *StateManager) processPodUpdate(pod corev1.Pod) {
+	for i := range sm.hierarchy {
+		removeNodeByKind(&sm.hierarchy[i], types.ResourceKindPod, pod.Name, pod.Namespace)
+	}
+
+	if !shouldIncludePod(pod) {
+		return
+	}
+
+	namespaceIndex, found := sm.findNamespaceIndex(pod.Namespace)
+	if !found {
+		return
+	}
+
+	podNode := podToHierarchyNode(pod)
+
+	foundMatchingService := false
+	for i := range sm.hierarchy[namespaceIndex].Relatives {
+		if sm.hierarchy[namespaceIndex].Relatives[i].Kind != types.ResourceKindService {
+			continue
+		}
+		serviceNamespace := ""
+		if sm.hierarchy[namespaceIndex].Relatives[i].Namespace != nil {
+			serviceNamespace = *sm.hierarchy[namespaceIndex].Relatives[i].Namespace
+		}
+		if serviceNamespace != pod.Namespace {
+			continue
+		}
+		if !labelsMatch(sm.hierarchy[namespaceIndex].Relatives[i].Selectors, pod.Labels) {
+			continue
+		}
+
+		sm.hierarchy[namespaceIndex].Relatives[i].Relatives = slices.DeleteFunc(
+			sm.hierarchy[namespaceIndex].Relatives[i].Relatives,
+			func(child types.HierarchyNode) bool {
+				return child.Kind == types.ResourceKindPod && child.Name == pod.Name
+			})
+		sm.hierarchy[namespaceIndex].Relatives[i].Relatives = append(sm.hierarchy[namespaceIndex].Relatives[i].Relatives, podNode)
+		foundMatchingService = true
+		break
+	}
+
+	if !foundMatchingService {
+		sm.hierarchy[namespaceIndex].Relatives = append(sm.hierarchy[namespaceIndex].Relatives, podNode)
+	}
+}
+
+func (sm *StateManager) processHTTPRouteUpdate(route gatewayv1beta1.HTTPRoute, services []corev1.Service, pods []corev1.Pod) {
+	for i := range sm.hierarchy {
+		removeNodeByKind(&sm.hierarchy[i], types.ResourceKindHTTPRoute, route.Name, route.Namespace)
+	}
+
+	namespaceIndex, found := sm.findNamespaceIndex(route.Namespace)
+	if !found {
+		return
+	}
+
+	routeNode := httpRouteToHierarchyNode(route)
+	routeNode.Relatives = findServicesForHTTPRoute(route, services, pods)
+	sm.hierarchy[namespaceIndex].Relatives = append(sm.hierarchy[namespaceIndex].Relatives, routeNode)
+}
+
+func (sm *StateManager) UpdateNamespace(ctx context.Context, ns corev1.Namespace) {
+	logger := log.FromContext(ctx)
+	logger.V(1).Info("Updating namespace", "namespace", ns.Name)
+	sm.eventChan <- StateUpdateEvent{Type: NamespaceUpdate, Namespace: ns}
+}
+
+func (sm *StateManager) DeleteNamespace(ctx context.Context, name string) {
+	logger := log.FromContext(ctx)
+	logger.V(1).Info("Deleting namespace", "namespace", name)
+	sm.eventChan <- StateUpdateEvent{Type: NamespaceDelete, Name: name}
+}
+
+func (sm *StateManager) UpdateService(ctx context.Context, svc corev1.Service, pods []corev1.Pod) {
+	logger := log.FromContext(ctx)
+	logger.V(1).Info("Updating service", "service", svc.Name, "namespace", svc.Namespace, "podCount", len(pods))
+	sm.eventChan <- StateUpdateEvent{Type: ServiceUpdate, Service: svc, Pods: pods}
+}
+
+func (sm *StateManager) DeleteService(ctx context.Context, name, namespace string) {
+	logger := log.FromContext(ctx)
+	logger.V(1).Info("Deleting service", "service", name, "namespace", namespace)
+	sm.eventChan <- StateUpdateEvent{Type: ServiceDelete, Name: name, Ns: namespace}
+}
+
+func (sm *StateManager) UpdatePod(ctx context.Context, pod corev1.Pod) {
+	logger := log.FromContext(ctx)
+	logger.V(1).Info("Updating pod", "pod", pod.Name, "namespace", pod.Namespace, "phase", pod.Status.Phase)
+	sm.eventChan <- StateUpdateEvent{Type: PodUpdate, Pod: pod}
+}
+
+func (sm *StateManager) DeletePod(ctx context.Context, name, namespace string) {
+	logger := log.FromContext(ctx)
+	logger.V(1).Info("Deleting pod", "pod", name, "namespace", namespace)
+	sm.eventChan <- StateUpdateEvent{Type: PodDelete, Name: name, Ns: namespace}
+}
+
+func (sm *StateManager) UpdateHTTPRoute(ctx context.Context, route gatewayv1beta1.HTTPRoute, services []corev1.Service, pods []corev1.Pod) {
+	logger := log.FromContext(ctx)
+	logger.V(1).Info("Updating httproute", "httproute", route.Name, "namespace", route.Namespace, "serviceCount", len(services), "podCount", len(pods))
+	sm.eventChan <- StateUpdateEvent{Type: HTTPRouteUpdate, HTTPRoute: route, Services: services, Pods: pods}
+}
+
+func (sm *StateManager) DeleteHTTPRoute(ctx context.Context, name, namespace string) {
+	logger := log.FromContext(ctx)
+	logger.V(1).Info("Deleting httproute", "httproute", name, "namespace", namespace)
+	sm.eventChan <- StateUpdateEvent{Type: HTTPRouteDelete, Name: name, Ns: namespace}
+}
+
+func (sm *StateManager) PushUpdate(conn *websocket.Conn) error {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	return conn.WriteJSON(sm.hierarchy)
+}
+
 func (sm *StateManager) Subscribe() chan []types.HierarchyNode {
 	sm.subMu.Lock()
 	defer sm.subMu.Unlock()
@@ -85,7 +323,6 @@ func (sm *StateManager) Subscribe() chan []types.HierarchyNode {
 	return ch
 }
 
-// Unsubscribe removes a channel from receiving state updates
 func (sm *StateManager) Unsubscribe(ch chan []types.HierarchyNode) {
 	sm.subMu.Lock()
 	defer sm.subMu.Unlock()
@@ -94,25 +331,8 @@ func (sm *StateManager) Unsubscribe(ch chan []types.HierarchyNode) {
 	close(ch)
 }
 
-// broadcastUpdate sends state to all subscribers and legacy channel
-func (sm *StateManager) broadcastUpdate() {
-	sm.mu.RLock()
-	currentState := make([]types.HierarchyNode, len(sm.hierarchy))
-	copy(currentState, sm.hierarchy)
-	sm.mu.RUnlock()
-
-	sm.subMu.RLock()
-	defer sm.subMu.RUnlock()
-
-	for subscriber := range sm.subscribers {
-		subscriber <- currentState
-	}
-
-	sm.updateChan <- true
-}
-
 // Helper functions to check if a resource should be included
-func shouldIncludePod(pod *corev1.Pod) bool {
+func shouldIncludePod(pod corev1.Pod) bool {
 	if pod.DeletionTimestamp != nil {
 		return false
 	}
@@ -128,14 +348,6 @@ func shouldIncludePod(pod *corev1.Pod) bool {
 	return true
 }
 
-func shouldIncludeService(_ *corev1.Service) bool {
-	return true
-}
-
-func shouldIncludeHTTPRoute(_ *gatewayv1beta1.HTTPRoute) bool {
-	return true
-}
-
 // removeNodeByKind removes a node from the hierarchy by kind, name, and namespace
 func removeNodeByKind(node *types.HierarchyNode, kind types.ResourceKind, name, namespace string) {
 	node.Relatives = slices.DeleteFunc(node.Relatives, func(child types.HierarchyNode) bool {
@@ -148,7 +360,7 @@ func removeNodeByKind(node *types.HierarchyNode, kind types.ResourceKind, name, 
 }
 
 // Convert Kubernetes resources to HierarchyNode
-func namespaceToHierarchyNode(ns *corev1.Namespace) types.HierarchyNode {
+func namespaceToHierarchyNode(ns corev1.Namespace) types.HierarchyNode {
 	return types.HierarchyNode{
 		Kind:      types.ResourceKindNamespace,
 		Name:      ns.Name,
@@ -158,138 +370,74 @@ func namespaceToHierarchyNode(ns *corev1.Namespace) types.HierarchyNode {
 	}
 }
 
-func serviceToHierarchyNode(svc *corev1.Service) types.HierarchyNode {
+func toHierarchyNode(kind types.ResourceKind, name, namespace string, metadata types.ResourceMetadata) types.HierarchyNode {
+	return types.HierarchyNode{
+		Kind:            kind,
+		Name:            name,
+		Namespace:       stringToPtr(namespace),
+		Relatives:       []types.HierarchyNode{},
+		Hostnames:       metadata.Hostnames,
+		Selectors:       metadata.Selectors,
+		Ports:           metadata.Ports,
+		PortMappings:    metadata.PortMappings,
+		TargetPorts:     metadata.TargetPorts,
+		TargetPortNames: metadata.TargetPortNames,
+		ContainerPorts:  metadata.ContainerPorts,
+		Labels:          metadata.Labels,
+		Phase:           metadata.Phase,
+		BackendRefs:     metadata.BackendRefs,
+		ServiceType:     metadata.ServiceType,
+		ClusterIPs:      metadata.ClusterIPs,
+		ExternalIPs:     metadata.ExternalIPs,
+		PodIPs:          metadata.PodIPs,
+		Group:           metadata.Group,
+		DisplayName:     metadata.DisplayName,
+		Ignore:          metadata.Ignore,
+	}
+}
+
+func stringToPtr(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
+func serviceToHierarchyNode(svc corev1.Service) types.HierarchyNode {
 	metadata := extractServiceMetadata(svc)
-	var namespace *string
-	if svc.Namespace != "" {
-		namespace = &svc.Namespace
-	}
-
-	return types.HierarchyNode{
-		Kind:            types.ResourceKindService,
-		Name:            svc.Name,
-		Namespace:       namespace,
-		Relatives:       []types.HierarchyNode{},
-		Hostnames:       metadata.Hostnames,
-		Selectors:       metadata.Selectors,
-		Ports:           metadata.Ports,
-		PortMappings:    metadata.PortMappings,
-		TargetPorts:     metadata.TargetPorts,
-		TargetPortNames: metadata.TargetPortNames,
-		ContainerPorts:  metadata.ContainerPorts,
-		Labels:          metadata.Labels,
-		Phase:           metadata.Phase,
-		BackendRefs:     metadata.BackendRefs,
-		ServiceType:     metadata.ServiceType,
-		ClusterIPs:      metadata.ClusterIPs,
-		ExternalIPs:     metadata.ExternalIPs,
-		PodIPs:          metadata.PodIPs,
-		Group:           metadata.Group,
-		DisplayName:     metadata.DisplayName,
-		Ignore:          metadata.Ignore,
-	}
+	return toHierarchyNode(types.ResourceKindService, svc.Name, svc.Namespace, metadata)
 }
 
-func podToHierarchyNode(pod *corev1.Pod) types.HierarchyNode {
+func podToHierarchyNode(pod corev1.Pod) types.HierarchyNode {
 	metadata := extractPodMetadata(pod)
-	var namespace *string
-	if pod.Namespace != "" {
-		namespace = &pod.Namespace
-	}
-
-	return types.HierarchyNode{
-		Kind:            types.ResourceKindPod,
-		Name:            pod.Name,
-		Namespace:       namespace,
-		Relatives:       []types.HierarchyNode{},
-		Hostnames:       metadata.Hostnames,
-		Selectors:       metadata.Selectors,
-		Ports:           metadata.Ports,
-		PortMappings:    metadata.PortMappings,
-		TargetPorts:     metadata.TargetPorts,
-		TargetPortNames: metadata.TargetPortNames,
-		ContainerPorts:  metadata.ContainerPorts,
-		Labels:          metadata.Labels,
-		Phase:           metadata.Phase,
-		BackendRefs:     metadata.BackendRefs,
-		ServiceType:     metadata.ServiceType,
-		ClusterIPs:      metadata.ClusterIPs,
-		ExternalIPs:     metadata.ExternalIPs,
-		PodIPs:          metadata.PodIPs,
-		Group:           metadata.Group,
-		DisplayName:     metadata.DisplayName,
-		Ignore:          metadata.Ignore,
-	}
+	return toHierarchyNode(types.ResourceKindPod, pod.Name, pod.Namespace, metadata)
 }
 
-func httpRouteToHierarchyNode(route *gatewayv1beta1.HTTPRoute) types.HierarchyNode {
+func httpRouteToHierarchyNode(route gatewayv1beta1.HTTPRoute) types.HierarchyNode {
 	metadata := extractHTTPRouteMetadata(route)
-	var namespace *string
-	if route.Namespace != "" {
-		namespace = &route.Namespace
-	}
-
-	return types.HierarchyNode{
-		Kind:            types.ResourceKindHTTPRoute,
-		Name:            route.Name,
-		Namespace:       namespace,
-		Relatives:       []types.HierarchyNode{},
-		Hostnames:       metadata.Hostnames,
-		Selectors:       metadata.Selectors,
-		Ports:           metadata.Ports,
-		PortMappings:    metadata.PortMappings,
-		TargetPorts:     metadata.TargetPorts,
-		TargetPortNames: metadata.TargetPortNames,
-		ContainerPorts:  metadata.ContainerPorts,
-		Labels:          metadata.Labels,
-		Phase:           metadata.Phase,
-		BackendRefs:     metadata.BackendRefs,
-		ServiceType:     metadata.ServiceType,
-		ClusterIPs:      metadata.ClusterIPs,
-		ExternalIPs:     metadata.ExternalIPs,
-		PodIPs:          metadata.PodIPs,
-		Group:           metadata.Group,
-		DisplayName:     metadata.DisplayName,
-		Ignore:          metadata.Ignore,
-	}
+	return toHierarchyNode(types.ResourceKindHTTPRoute, route.Name, route.Namespace, metadata)
 }
 
-// ServeHTTP implements http.Handler to serve cluster state as JSON
-func (sm *StateManager) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	hierarchy := sm.GetHierarchy()
-
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(hierarchy); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+func getAnnotationValue(annotations map[string]string, key string) string {
+	if annotations == nil {
+		return ""
 	}
+	return annotations[key]
 }
 
-// extractGroupFromAnnotations extracts group information from constellation annotations
 func extractGroupFromAnnotations(annotations map[string]string) string {
-	if annotations == nil {
-		return ""
-	}
-	return annotations["constellation.kyledev.co/group"]
+	return getAnnotationValue(annotations, "constellation.kyledev.co/group")
 }
 
-// extractDisplayNameFromAnnotations extracts display name from constellation annotations
 func extractDisplayNameFromAnnotations(annotations map[string]string) string {
-	if annotations == nil {
-		return ""
-	}
-	return annotations["constellation.kyledev.co/display-name"]
+	return getAnnotationValue(annotations, "constellation.kyledev.co/display-name")
 }
 
-// shouldIgnoreResource checks if resource should be ignored based on constellation annotations
 func shouldIgnoreResource(annotations map[string]string) bool {
-	if annotations == nil {
-		return false
-	}
-	return annotations["constellation.kyledev.co/ignore"] == "true"
+	return getAnnotationValue(annotations, "constellation.kyledev.co/ignore") == "true"
 }
 
-func extractServiceMetadata(svc *corev1.Service) types.ResourceMetadata {
+func extractServiceMetadata(svc corev1.Service) types.ResourceMetadata {
 	metadata := types.ResourceMetadata{
 		Labels:    svc.Labels,
 		Selectors: svc.Spec.Selector,
@@ -337,7 +485,7 @@ func extractServiceMetadata(svc *corev1.Service) types.ResourceMetadata {
 	return metadata
 }
 
-func extractPodMetadata(pod *corev1.Pod) types.ResourceMetadata {
+func extractPodMetadata(pod corev1.Pod) types.ResourceMetadata {
 	metadata := types.ResourceMetadata{
 		Labels:      pod.Labels,
 		Group:       extractGroupFromAnnotations(pod.Annotations),
@@ -381,7 +529,7 @@ func extractPodMetadata(pod *corev1.Pod) types.ResourceMetadata {
 	return metadata
 }
 
-func extractHTTPRouteMetadata(route *gatewayv1beta1.HTTPRoute) types.ResourceMetadata {
+func extractHTTPRouteMetadata(route gatewayv1beta1.HTTPRoute) types.ResourceMetadata {
 	metadata := types.ResourceMetadata{
 		Labels:      route.Labels,
 		Group:       extractGroupFromAnnotations(route.Annotations),
@@ -412,179 +560,6 @@ func extractHTTPRouteMetadata(route *gatewayv1beta1.HTTPRoute) types.ResourceMet
 	return metadata
 }
 
-// StateManager update methods following the Rust implementation pattern
-
-func (sm *StateManager) updateNamespace(namespace *corev1.Namespace) {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-
-	// Find existing namespace or create new one
-	var nsNode *types.HierarchyNode
-	for i := range sm.hierarchy {
-		if sm.hierarchy[i].Kind == types.ResourceKindNamespace && sm.hierarchy[i].Name == namespace.Name {
-			nsNode = &sm.hierarchy[i]
-			break
-		}
-	}
-
-	if nsNode == nil {
-		newNode := namespaceToHierarchyNode(namespace)
-		sm.hierarchy = append(sm.hierarchy, newNode)
-	}
-
-	// Sort hierarchy by name
-	slices.SortFunc(sm.hierarchy, func(a, b types.HierarchyNode) int {
-		if a.Name < b.Name {
-			return -1
-		}
-		if a.Name > b.Name {
-			return 1
-		}
-		return 0
-	})
-}
-
-func (sm *StateManager) removeNamespace(name string) {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-
-	sm.hierarchy = slices.DeleteFunc(sm.hierarchy, func(node types.HierarchyNode) bool {
-		return node.Kind == types.ResourceKindNamespace && node.Name == name
-	})
-}
-
-func (sm *StateManager) updateService(service *corev1.Service, pods []corev1.Pod) {
-	if !shouldIncludeService(service) {
-		return
-	}
-
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-
-	serviceName := service.Name
-	serviceNamespace := service.Namespace
-
-	for i := range sm.hierarchy {
-		removeNodeByKind(&sm.hierarchy[i], types.ResourceKindService, serviceName, serviceNamespace)
-	}
-
-	var namespaceNode *types.HierarchyNode
-	for i := range sm.hierarchy {
-		if sm.hierarchy[i].Kind == types.ResourceKindNamespace && sm.hierarchy[i].Name == serviceNamespace {
-			namespaceNode = &sm.hierarchy[i]
-			break
-		}
-	}
-
-	if namespaceNode == nil {
-		return
-	}
-
-	httpRouteIndex := findHTTPRouteForService(*namespaceNode, serviceName)
-	serviceNode := createServiceNodeWithPods(service, pods)
-
-	if httpRouteIndex != -1 {
-		namespaceNode.Relatives[httpRouteIndex].Relatives = append(namespaceNode.Relatives[httpRouteIndex].Relatives, serviceNode)
-		return
-	}
-
-	namespaceNode.Relatives = append(namespaceNode.Relatives, serviceNode)
-}
-
-func (sm *StateManager) removeService(name, namespace string) {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-
-	for i := range sm.hierarchy {
-		removeNodeByKind(&sm.hierarchy[i], types.ResourceKindService, name, namespace)
-	}
-}
-
-func (sm *StateManager) updatePod(pod *corev1.Pod) {
-	podName := pod.Name
-	podNamespace := pod.Namespace
-
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-
-	for i := range sm.hierarchy {
-		removeNodeByKind(&sm.hierarchy[i], types.ResourceKindPod, podName, podNamespace)
-	}
-
-	if !shouldIncludePod(pod) {
-		return
-	}
-
-	var namespaceNode *types.HierarchyNode
-	for i := range sm.hierarchy {
-		if sm.hierarchy[i].Kind == types.ResourceKindNamespace && sm.hierarchy[i].Name == podNamespace {
-			namespaceNode = &sm.hierarchy[i]
-			break
-		}
-	}
-
-	if namespaceNode == nil {
-		return
-	}
-
-	podNode := podToHierarchyNode(pod)
-	if !sm.addPodToMatchingServiceInNamespace(namespaceNode, pod, podNode) {
-		namespaceNode.Relatives = append(namespaceNode.Relatives, podNode)
-	}
-}
-
-func (sm *StateManager) removePod(name, namespace string) {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-
-	for i := range sm.hierarchy {
-		removeNodeByKind(&sm.hierarchy[i], types.ResourceKindPod, name, namespace)
-	}
-}
-
-func (sm *StateManager) updateHTTPRoute(route *gatewayv1beta1.HTTPRoute, services []corev1.Service, pods []corev1.Pod) {
-	if !shouldIncludeHTTPRoute(route) {
-		return
-	}
-
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-
-	routeName := route.Name
-	routeNamespace := route.Namespace
-
-	for i := range sm.hierarchy {
-		removeNodeByKind(&sm.hierarchy[i], types.ResourceKindHTTPRoute, routeName, routeNamespace)
-	}
-
-	var namespaceNode *types.HierarchyNode
-	for i := range sm.hierarchy {
-		if sm.hierarchy[i].Kind == types.ResourceKindNamespace && sm.hierarchy[i].Name == routeNamespace {
-			namespaceNode = &sm.hierarchy[i]
-			break
-		}
-	}
-
-	if namespaceNode == nil {
-		return
-	}
-
-	routeNode := httpRouteToHierarchyNode(route)
-	routeNode.Relatives = findServicesForHTTPRoute(route, services, pods)
-	namespaceNode.Relatives = append(namespaceNode.Relatives, routeNode)
-}
-
-func (sm *StateManager) removeHTTPRoute(name, namespace string) {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-
-	for i := range sm.hierarchy {
-		removeNodeByKind(&sm.hierarchy[i], types.ResourceKindHTTPRoute, name, namespace)
-	}
-}
-
-// Pure helper functions that don't modify state
-
 // findHTTPRouteForService returns the index of HTTPRoute that references the service, or -1
 func findHTTPRouteForService(namespaceNode types.HierarchyNode, serviceName string) int {
 	for i, relative := range namespaceNode.Relatives {
@@ -600,12 +575,7 @@ func findHTTPRouteForService(namespaceNode types.HierarchyNode, serviceName stri
 
 // serviceReferencedByHTTPRoute checks if a service is referenced by an HTTPRoute
 func serviceReferencedByHTTPRoute(httpRoute types.HierarchyNode, serviceName string) bool {
-	for _, backendRef := range httpRoute.BackendRefs {
-		if backendRef == serviceName {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(httpRoute.BackendRefs, serviceName)
 }
 
 // findMatchingPods returns all pods that match the service selector
@@ -615,64 +585,82 @@ func findMatchingPods(service *corev1.Service, pods []corev1.Pod) []types.Hierar
 		if pod.Namespace != service.Namespace {
 			continue
 		}
-		if !shouldIncludePod(&pod) {
+		if !shouldIncludePod(pod) {
 			continue
 		}
 		if !labelsMatch(service.Spec.Selector, pod.Labels) {
 			continue
 		}
-		matchingPods = append(matchingPods, podToHierarchyNode(&pod))
+		matchingPods = append(matchingPods, podToHierarchyNode(pod))
 	}
 	return matchingPods
 }
 
 // createServiceNodeWithPods creates a service node with matching pods already included
-func createServiceNodeWithPods(service *corev1.Service, pods []corev1.Pod) types.HierarchyNode {
+func createServiceNodeWithPods(service corev1.Service, pods []corev1.Pod) types.HierarchyNode {
 	serviceNode := serviceToHierarchyNode(service)
-	serviceNode.Relatives = findMatchingPods(service, pods)
+	serviceNode.Relatives = findMatchingPods(&service, pods)
 	return serviceNode
 }
 
+// findServiceByName returns the service with matching name and namespace
+func findServiceByName(services []corev1.Service, name, namespace string) (corev1.Service, bool) {
+	for _, service := range services {
+		if service.Name != name {
+			continue
+		}
+		if service.Namespace != namespace {
+			continue
+		}
+		return service, true
+	}
+	return corev1.Service{}, false
+}
+
 // findServicesForHTTPRoute returns all services referenced by the HTTPRoute
-func findServicesForHTTPRoute(route *gatewayv1beta1.HTTPRoute, services []corev1.Service, pods []corev1.Pod) []types.HierarchyNode {
+func findServicesForHTTPRoute(route gatewayv1beta1.HTTPRoute, services []corev1.Service, pods []corev1.Pod) []types.HierarchyNode {
 	var serviceNodes []types.HierarchyNode
 	for _, rule := range route.Spec.Rules {
 		for _, backendRef := range rule.BackendRefs {
 			serviceName := string(backendRef.Name)
-			for _, service := range services {
-				if service.Name != serviceName || service.Namespace != route.Namespace {
-					continue
-				}
-				serviceNode := createServiceNodeWithPods(&service, pods)
-				serviceNodes = append(serviceNodes, serviceNode)
-				break
+			service, found := findServiceByName(services, serviceName, route.Namespace)
+			if !found {
+				continue
 			}
+			serviceNode := createServiceNodeWithPods(service, pods)
+			serviceNodes = append(serviceNodes, serviceNode)
 		}
 	}
 	return serviceNodes
 }
 
 // podMatchesAnyService checks if a pod matches any service selector in the namespace
-func podMatchesAnyService(pod *corev1.Pod, namespaceNode types.HierarchyNode) bool {
-	var checkNode func(types.HierarchyNode) bool
-	checkNode = func(node types.HierarchyNode) bool {
-		if node.Kind == types.ResourceKindService {
-			serviceNamespace := ""
-			if node.Namespace != nil {
-				serviceNamespace = *node.Namespace
-			}
-			if serviceNamespace == pod.Namespace && labelsMatch(node.Selectors, pod.Labels) {
-				return true
-			}
-		}
-		for _, relative := range node.Relatives {
-			if checkNode(relative) {
-				return true
-			}
-		}
-		return false
+func podMatchesAnyService(pod corev1.Pod, node types.HierarchyNode) bool {
+	if node.Kind != types.ResourceKindService {
+		return slices.ContainsFunc(node.Relatives, func(relative types.HierarchyNode) bool {
+			return podMatchesAnyService(pod, relative)
+		})
 	}
-	return checkNode(namespaceNode)
+
+	if node.Namespace == nil {
+		return slices.ContainsFunc(node.Relatives, func(relative types.HierarchyNode) bool {
+			return podMatchesAnyService(pod, relative)
+		})
+	}
+
+	if *node.Namespace != pod.Namespace {
+		return slices.ContainsFunc(node.Relatives, func(relative types.HierarchyNode) bool {
+			return podMatchesAnyService(pod, relative)
+		})
+	}
+
+	if !labelsMatch(node.Selectors, pod.Labels) {
+		return slices.ContainsFunc(node.Relatives, func(relative types.HierarchyNode) bool {
+			return podMatchesAnyService(pod, relative)
+		})
+	}
+
+	return true
 }
 
 // BuildInitialState loads all existing resources and builds the initial hierarchy
@@ -697,10 +685,44 @@ func (sm *StateManager) BuildInitialState(ctx context.Context, client client.Cli
 	var httpRoutes gatewayv1beta1.HTTPRouteList
 	client.List(ctx, &httpRoutes) // Ignore errors - HTTPRoutes might not be available
 
-	sm.addHTTPRoutesToHierarchy(httpRoutes.Items, services.Items, pods.Items)
-	sm.addServicesToHierarchy(services.Items, pods.Items)
-	sm.addPodsToHierarchy(pods.Items)
-	sm.sortHierarchy()
+	for _, route := range httpRoutes.Items {
+		namespaceIndex, found := sm.findNamespaceIndex(route.Namespace)
+		if !found {
+			continue
+		}
+		routeNode := httpRouteToHierarchyNode(route)
+		routeNode.Relatives = findServicesForHTTPRoute(route, services.Items, pods.Items)
+		sm.hierarchy[namespaceIndex].Relatives = append(sm.hierarchy[namespaceIndex].Relatives, routeNode)
+	}
+
+	for _, service := range services.Items {
+		namespaceIndex, found := sm.findNamespaceIndex(service.Namespace)
+		if !found {
+			continue
+		}
+		if sm.serviceAlreadyInHTTPRoute(service.Name, sm.hierarchy[namespaceIndex]) {
+			continue
+		}
+		serviceNode := createServiceNodeWithPods(service, pods.Items)
+		sm.hierarchy[namespaceIndex].Relatives = append(sm.hierarchy[namespaceIndex].Relatives, serviceNode)
+	}
+
+	for _, pod := range pods.Items {
+		if !shouldIncludePod(pod) {
+			continue
+		}
+		namespaceIndex, found := sm.findNamespaceIndex(pod.Namespace)
+		if !found {
+			continue
+		}
+		if podMatchesAnyService(pod, sm.hierarchy[namespaceIndex]) {
+			continue
+		}
+		podNode := podToHierarchyNode(pod)
+		sm.hierarchy[namespaceIndex].Relatives = append(sm.hierarchy[namespaceIndex].Relatives, podNode)
+	}
+
+	slices.SortFunc(sm.hierarchy, compareNodesByName)
 
 	return nil
 }
@@ -712,88 +734,20 @@ func (sm *StateManager) loadAllNamespaces(ctx context.Context, client client.Cli
 	}
 
 	for _, ns := range namespaces.Items {
-		nsNode := namespaceToHierarchyNode(&ns)
+		nsNode := namespaceToHierarchyNode(ns)
 		sm.hierarchy = append(sm.hierarchy, nsNode)
 	}
 	return nil
 }
 
-func (sm *StateManager) addHTTPRoutesToHierarchy(routes []gatewayv1beta1.HTTPRoute, services []corev1.Service, pods []corev1.Pod) {
-	for _, route := range routes {
-		if !shouldIncludeHTTPRoute(&route) {
-			continue
-		}
-
-		namespaceIndex := sm.findNamespaceIndex(route.Namespace)
-		if namespaceIndex == -1 {
-			continue
-		}
-
-		routeNode := httpRouteToHierarchyNode(&route)
-		routeNode.Relatives = findServicesForHTTPRoute(&route, services, pods)
-		sm.hierarchy[namespaceIndex].Relatives = append(sm.hierarchy[namespaceIndex].Relatives, routeNode)
+func compareNodesByName(a, b types.HierarchyNode) int {
+	if a.Name < b.Name {
+		return -1
 	}
-}
-
-func (sm *StateManager) addServicesToHierarchy(services []corev1.Service, pods []corev1.Pod) {
-	for _, service := range services {
-		if !shouldIncludeService(&service) {
-			continue
-		}
-
-		namespaceIndex := sm.findNamespaceIndex(service.Namespace)
-		if namespaceIndex == -1 {
-			continue
-		}
-
-		if sm.serviceAlreadyInHTTPRoute(service.Name, sm.hierarchy[namespaceIndex]) {
-			continue
-		}
-
-		serviceNode := createServiceNodeWithPods(&service, pods)
-		sm.hierarchy[namespaceIndex].Relatives = append(sm.hierarchy[namespaceIndex].Relatives, serviceNode)
+	if a.Name > b.Name {
+		return 1
 	}
-}
-
-func (sm *StateManager) addPodsToHierarchy(pods []corev1.Pod) {
-	for _, pod := range pods {
-		if !shouldIncludePod(&pod) {
-			continue
-		}
-
-		namespaceIndex := sm.findNamespaceIndex(pod.Namespace)
-		if namespaceIndex == -1 {
-			continue
-		}
-
-		if podMatchesAnyService(&pod, sm.hierarchy[namespaceIndex]) {
-			continue
-		}
-
-		podNode := podToHierarchyNode(&pod)
-		sm.hierarchy[namespaceIndex].Relatives = append(sm.hierarchy[namespaceIndex].Relatives, podNode)
-	}
-}
-
-func (sm *StateManager) sortHierarchy() {
-	slices.SortFunc(sm.hierarchy, func(a, b types.HierarchyNode) int {
-		if a.Name < b.Name {
-			return -1
-		}
-		if a.Name > b.Name {
-			return 1
-		}
-		return 0
-	})
-}
-
-func (sm *StateManager) findNamespaceIndex(namespaceName string) int {
-	for i, node := range sm.hierarchy {
-		if node.Kind == types.ResourceKindNamespace && node.Name == namespaceName {
-			return i
-		}
-	}
-	return -1
+	return 0
 }
 
 func (sm *StateManager) serviceAlreadyInHTTPRoute(serviceName string, namespaceNode types.HierarchyNode) bool {
@@ -810,35 +764,15 @@ func (sm *StateManager) serviceAlreadyInHTTPRoute(serviceName string, namespaceN
 	return false
 }
 
-// addPodToMatchingServiceInNamespace adds the pod to any matching service in the namespace
-// returns true if the pod was added to a service, false if it should be added to namespace
-func (sm *StateManager) addPodToMatchingServiceInNamespace(namespaceNode *types.HierarchyNode, pod *corev1.Pod, podNode types.HierarchyNode) bool {
-	return sm.addPodToMatchingServiceInNode(namespaceNode, pod, podNode)
-}
-
-// addPodToMatchingServiceInNode recursively searches for services that match the pod
-func (sm *StateManager) addPodToMatchingServiceInNode(node *types.HierarchyNode, pod *corev1.Pod, podNode types.HierarchyNode) bool {
-	if node.Kind == types.ResourceKindService {
-		serviceNamespace := ""
-		if node.Namespace != nil {
-			serviceNamespace = *node.Namespace
+func (sm *StateManager) findNamespaceIndex(namespaceName string) (int, bool) {
+	for i, node := range sm.hierarchy {
+		if node.Kind != types.ResourceKindNamespace {
+			continue
 		}
-
-		if serviceNamespace == pod.Namespace && labelsMatch(node.Selectors, pod.Labels) {
-			node.Relatives = slices.DeleteFunc(node.Relatives, func(child types.HierarchyNode) bool {
-				return child.Kind == types.ResourceKindPod && child.Name == pod.Name
-			})
-
-			node.Relatives = append(node.Relatives, podNode)
-			return true
+		if node.Name != namespaceName {
+			continue
 		}
+		return i, true
 	}
-
-	for i := range node.Relatives {
-		if sm.addPodToMatchingServiceInNode(&node.Relatives[i], pod, podNode) {
-			return true
-		}
-	}
-
-	return false
+	return -1, false
 }

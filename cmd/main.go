@@ -228,8 +228,10 @@ func main() {
 		setupLog.Error(err, "failed to build initial state")
 		os.Exit(1)
 	}
+
 	setupLog.Info("initial cluster state built successfully")
 
-	// Keep main goroutine alive
+	go stateManager.Start(ctx)
+
 	<-ctx.Done()
 }

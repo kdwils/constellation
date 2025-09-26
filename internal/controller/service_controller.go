@@ -28,8 +28,7 @@ func (r *ServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	var service corev1.Service
 	if err := r.Get(ctx, req.NamespacedName, &service); err != nil {
 		if client.IgnoreNotFound(err) == nil {
-			r.stateManager.removeService(req.Name, req.Namespace)
-			r.stateManager.broadcastUpdate()
+			r.stateManager.DeleteService(ctx, req.Name, req.Namespace)
 			return ctrl.Result{}, nil
 		}
 		logger.Error(err, "Failed to get service")
@@ -42,8 +41,7 @@ func (r *ServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return ctrl.Result{}, err
 	}
 
-	r.stateManager.updateService(&service, pods.Items)
-	r.stateManager.broadcastUpdate()
+	r.stateManager.UpdateService(ctx, service, pods.Items)
 
 	return ctrl.Result{}, nil
 }

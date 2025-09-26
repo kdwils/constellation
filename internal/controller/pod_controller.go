@@ -28,16 +28,14 @@ func (r *PodReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 	var pod corev1.Pod
 	if err := r.Get(ctx, req.NamespacedName, &pod); err != nil {
 		if client.IgnoreNotFound(err) == nil {
-			r.stateManager.removePod(req.Name, req.Namespace)
-			r.stateManager.broadcastUpdate()
+			r.stateManager.DeletePod(ctx, req.Name, req.Namespace)
 			return ctrl.Result{}, nil
 		}
 		logger.Error(err, "Failed to get pod")
 		return ctrl.Result{}, err
 	}
 
-	r.stateManager.updatePod(&pod)
-	r.stateManager.broadcastUpdate()
+	r.stateManager.UpdatePod(ctx, pod)
 
 	return ctrl.Result{}, nil
 }

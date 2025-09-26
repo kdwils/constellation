@@ -28,16 +28,14 @@ func (r *NamespaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	var namespace corev1.Namespace
 	if err := r.Get(ctx, req.NamespacedName, &namespace); err != nil {
 		if client.IgnoreNotFound(err) == nil {
-			r.stateManager.removeNamespace(req.Name)
-			r.stateManager.broadcastUpdate()
+			r.stateManager.DeleteNamespace(ctx, req.Name)
 			return ctrl.Result{}, nil
 		}
 		logger.Error(err, "Failed to get namespace")
 		return ctrl.Result{}, err
 	}
 
-	r.stateManager.updateNamespace(&namespace)
-	r.stateManager.broadcastUpdate()
+	r.stateManager.UpdateNamespace(ctx, namespace)
 
 	return ctrl.Result{}, nil
 }

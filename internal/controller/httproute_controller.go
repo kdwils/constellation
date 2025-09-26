@@ -29,8 +29,7 @@ func (r *HTTPRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	var httpRoute gatewayv1beta1.HTTPRoute
 	if err := r.Get(ctx, req.NamespacedName, &httpRoute); err != nil {
 		if client.IgnoreNotFound(err) == nil {
-			r.stateManager.removeHTTPRoute(req.Name, req.Namespace)
-			r.stateManager.broadcastUpdate()
+			r.stateManager.DeleteHTTPRoute(ctx, req.Name, req.Namespace)
 			return ctrl.Result{}, nil
 		}
 		logger.Error(err, "Failed to get httproute")
@@ -49,8 +48,7 @@ func (r *HTTPRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, err
 	}
 
-	r.stateManager.updateHTTPRoute(&httpRoute, services.Items, pods.Items)
-	r.stateManager.broadcastUpdate()
+	r.stateManager.UpdateHTTPRoute(ctx, httpRoute, services.Items, pods.Items)
 
 	return ctrl.Result{}, nil
 }

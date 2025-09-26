@@ -20,6 +20,7 @@ type StateProvider interface {
 	GetHierarchy() []types.HierarchyNode
 	Subscribe() chan []types.HierarchyNode
 	Unsubscribe(chan []types.HierarchyNode)
+	PushUpdate(conn *websocket.Conn) error
 }
 
 type Server struct {
@@ -92,16 +93,15 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	stateChan := s.stateProvider.Subscribe()
 	defer s.stateProvider.Unsubscribe(stateChan)
 
-	hierarchy := s.stateProvider.GetHierarchy()
-	if err := conn.WriteJSON(hierarchy); err != nil {
+	if err := s.stateProvider.PushUpdate(conn); err != nil {
 		fmt.Printf("WebSocket initial write error: %v\n", err)
 		return
 	}
 
 	for {
 		select {
-		case hierarchy := <-stateChan:
-			if err := conn.WriteJSON(hierarchy); err != nil {
+		case <-stateChan:
+			if err := s.stateProvider.PushUpdate(conn); err != nil {
 				fmt.Printf("WebSocket write error: %v\n", err)
 				return
 			}
@@ -131,7 +131,6 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) staticFileHandler(fileServer http.Handler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Try to serve the requested file
 		fileServer.ServeHTTP(w, r)
 	}
 }
