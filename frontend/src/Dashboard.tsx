@@ -21,6 +21,7 @@ export default function Dashboard() {
         const wsUrl = `${protocol}//${window.location.host}/ws`;
         const ws = new WebSocket(wsUrl);
 
+
         ws.onopen = () => {
             setConnectionStatus('connected');
             setError(null);
@@ -28,6 +29,10 @@ export default function Dashboard() {
         };
 
         ws.onmessage = (event) => {
+            if (event.data === '') {
+                return;
+            }
+
             try {
                 const newData = JSON.parse(event.data);
                 setData(newData);
