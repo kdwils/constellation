@@ -34,7 +34,7 @@ export default function Dashboard() {
                 // Server sent a ping, browser automatically responds with pong
                 return;
             }
-            
+
             try {
                 const newData = JSON.parse(event.data);
                 setData(newData);
