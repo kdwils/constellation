@@ -105,10 +105,6 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		conn.SetReadDeadline(time.Now().Add(pongWait))
 		return nil
 	})
-	conn.SetPingHandler(func(appData string) error {
-		conn.SetWriteDeadline(time.Now().Add(writeWait))
-		return conn.WriteMessage(websocket.PongMessage, []byte(appData))
-	})
 
 	stateChan := s.stateProvider.Subscribe()
 	defer s.stateProvider.Unsubscribe(stateChan)
@@ -117,6 +113,16 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		fmt.Printf("WebSocket initial write error: %v\n", err)
 		return
 	}
+
+	go func() {
+		for {
+			_, _, err := conn.ReadMessage()
+			if err != nil {
+				fmt.Printf("WebSocket read error: %v\n", err)
+				return
+			}
+		}
+	}()
 
 	pingTicker := time.NewTicker(pingPeriod)
 	defer pingTicker.Stop()
