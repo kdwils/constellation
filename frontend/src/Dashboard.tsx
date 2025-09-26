@@ -17,7 +17,8 @@ export default function Dashboard() {
     const [selectedGroup, setSelectedGroup] = useState<string | null>(null);
 
     useEffect(() => {
-        const wsUrl = `ws://${window.location.host}/ws`;
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = `${protocol}//${window.location.host}/ws`;
         const ws = new WebSocket(wsUrl);
 
         ws.onopen = () => {
