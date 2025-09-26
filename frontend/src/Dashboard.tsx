@@ -29,9 +29,7 @@ export default function Dashboard() {
         };
 
         ws.onmessage = (event) => {
-            // Handle ping messages from server (they arrive as empty message)
             if (event.data === '') {
-                // Server sent a ping, browser automatically responds with pong
                 return;
             }
 
