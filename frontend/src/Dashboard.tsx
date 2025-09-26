@@ -17,90 +17,44 @@ export default function Dashboard() {
     const [selectedGroup, setSelectedGroup] = useState<string | null>(null);
 
     useEffect(() => {
-        let eventSource: WebSocket | null = null;
-        let retryTimeout: ReturnType<typeof setTimeout>;
-        let healthCheckTimeout: ReturnType<typeof setTimeout>;
+        const wsUrl = `ws://${window.location.host}/ws`;
+        const ws = new WebSocket(wsUrl);
 
-        const checkHealth = async (): Promise<boolean> => {
+        ws.onopen = () => {
+            setConnectionStatus('connected');
+            setError(null);
+            setLoading(false);
+        };
+
+        ws.onmessage = (event) => {
             try {
-                const response = await fetch('/healthz');
-                return response.ok;
-            } catch {
-                return false;
+                const newData = JSON.parse(event.data);
+                setData(newData);
+                setLoading(false);
+
+                if (newData.length > 0 && !selectedNamespace) {
+                    setSelectedNamespace(newData[0].name);
+                }
+            } catch (err) {
+                console.error('Failed to parse WebSocket data:', err);
+                setError('Failed to parse server data');
             }
         };
 
-        const createConnection = async () => {
-            const isHealthy = await checkHealth();
-
-            if (!isHealthy) {
-                setError('Server not ready. Waiting for Kubernetes resources...');
-                healthCheckTimeout = setTimeout(() => {
-                    setConnectionStatus('connecting');
-                    createConnection();
-                }, 2000);
-                return;
-            }
-
-            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const wsUrl = `${protocol}//${window.location.host}/state/stream`;
-            eventSource = new WebSocket(wsUrl);
-
-            eventSource.onopen = () => {
-                setConnectionStatus('connected');
-                setError(null);
-            };
-
-            eventSource.onmessage = (event) => {
-                try {
-                    const newData = JSON.parse(event.data);
-
-                    setData(newData);
-                    setLoading(false);
-
-                    setSelectedNamespace(current => {
-                        if (newData.length > 0 && !current) {
-                            return newData[0].name;
-                        }
-                        return current;
-                    });
-                } catch (err) {
-                    console.error('Failed to parse WebSocket data:', err);
-                    setError('Failed to parse server data');
-                }
-            };
-
-            eventSource.onerror = (err) => {
-                console.error('WebSocket connection error:', err);
-                setConnectionStatus('disconnected');
-                setError('Connection to server lost. Retrying...');
-                eventSource?.close();
-
-                retryTimeout = setTimeout(() => {
-                    setConnectionStatus('connecting');
-                    createConnection();
-                }, 5000);
-            };
-
-            eventSource.onclose = () => {
-                if (connectionStatus !== 'disconnected') {
-                    setConnectionStatus('disconnected');
-                    setError('Connection to server lost. Retrying...');
-
-                    retryTimeout = setTimeout(() => {
-                        setConnectionStatus('connecting');
-                        createConnection();
-                    }, 5000);
-                }
-            };
+        ws.onerror = (err) => {
+            console.error('WebSocket error:', err);
+            setConnectionStatus('disconnected');
+            setError('Connection failed');
         };
 
-        createConnection();
+        ws.onclose = (event) => {
+            console.log('WebSocket closed:', event.code, event.reason);
+            setConnectionStatus('disconnected');
+            setError('Connection lost');
+        };
 
         return () => {
-            clearTimeout(retryTimeout);
-            clearTimeout(healthCheckTimeout);
-            eventSource?.close();
+            ws.close();
         };
     }, []);
 
@@ -131,12 +85,12 @@ export default function Dashboard() {
     const totalResources = calculateTotalResourcesAcrossNamespaces(data);
 
     const currentNamespace = selectedNamespace ? data.find(ns => ns.name === selectedNamespace) : null;
-    
+
     const groups = new Map(
         extractGroups(data).map(group => [group.name, group.resources])
     );
     const currentGroupResources = selectedGroup && groups.has(selectedGroup) ? groups.get(selectedGroup)! : null;
-    
+
     // Handle view mode changes - clear selection when switching modes
     const handleViewModeChange = (mode: 'namespace' | 'group') => {
         setViewMode(mode);
