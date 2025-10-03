@@ -7,8 +7,8 @@ interface NamespaceSidebarProps {
     namespaces: ResourceNode[];
     selectedNamespace: string | null;
     onNamespaceSelect: (namespace: string) => void;
-    viewMode: 'namespace' | 'group';
-    onViewModeChange: (mode: 'namespace' | 'group') => void;
+    viewMode: 'health' | 'namespace' | 'group';
+    onViewModeChange: (mode: 'health' | 'namespace' | 'group') => void;
     selectedGroup: string | null;
     onGroupSelect: (group: string) => void;
 }
@@ -30,7 +30,9 @@ export function NamespaceSidebar({ namespaces, selectedNamespace, onNamespaceSel
                     />
                 </div>
 
-                {viewMode === 'namespace' ? (
+                {viewMode === 'health' ? (
+                    <p className="text-sm text-gray-600">Service health monitoring</p>
+                ) : viewMode === 'namespace' ? (
                     <p className="text-sm text-gray-600">{namespaces.length} namespaces</p>
                 ) : (
                     <p className="text-sm text-gray-600">{groups.length} groups</p>
@@ -38,7 +40,12 @@ export function NamespaceSidebar({ namespaces, selectedNamespace, onNamespaceSel
             </div>
 
             <div className="flex-1 overflow-y-auto overflow-x-hidden min-h-0">
-                {viewMode === 'namespace' ? (
+                {viewMode === 'health' ? (
+                    <div className="p-4 text-center text-gray-500">
+                        <div className="text-4xl mb-2">❤️</div>
+                        <p>Switch to Namespaces or Groups view to see the resource tree</p>
+                    </div>
+                ) : viewMode === 'namespace' ? (
                     <div className="p-2">
                         {namespaces.map((namespace) => {
                             const stats = calculateNamespaceStats(namespace);

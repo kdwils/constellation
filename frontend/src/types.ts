@@ -6,12 +6,33 @@ export interface ContainerPortInfo {
     protocol?: string;
 }
 
+export interface HealthCheckEntry {
+    timestamp: string;
+    status: "healthy" | "unhealthy" | "unknown";
+    latency: number;
+    error?: string;
+    url: string;
+    method: string;
+    response_code?: number;
+}
+
+export interface ServiceHealthInfo {
+    service_name: string;
+    namespace: string;
+    last_check: string;
+    status: "healthy" | "unhealthy" | "unknown";
+    uptime: number;
+    history: HealthCheckEntry[];
+    url: string;
+}
+
 export interface ResourceNode {
     kind: Kind;
     name: string;
     namespace?: string;
     relatives?: ResourceNode[];
     health?: "Healthy" | "Degraded" | "Error" | "Unknown";
+    health_info?: ServiceHealthInfo;
     hostnames?: string[];
     selectors?: Record<string, string>;
     ports?: number[];

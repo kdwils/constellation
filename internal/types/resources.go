@@ -1,6 +1,8 @@
 package types
 
 import (
+	"time"
+
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/gateway-api/apis/v1beta1"
@@ -76,6 +78,7 @@ type HierarchyNode struct {
 	Group           string              `json:"group,omitempty"`
 	DisplayName     string              `json:"display_name,omitempty"`
 	Ignore          bool                `json:"ignore,omitempty"`
+	HealthInfo      *ServiceHealthInfo  `json:"health_info,omitempty"`
 }
 
 type ClusterState struct {
@@ -113,3 +116,33 @@ type HTTPRouteSpec struct {
 }
 
 func (h HTTPRouteSpec) GetKind() ResourceKind { return ResourceKindHTTPRoute }
+
+// Health check related types
+
+type HealthStatus string
+
+const (
+	HealthStatusHealthy   HealthStatus = "healthy"
+	HealthStatusUnhealthy HealthStatus = "unhealthy"
+	HealthStatusUnknown   HealthStatus = "unknown"
+)
+
+type HealthCheckEntry struct {
+	Timestamp    time.Time     `json:"timestamp"`
+	Status       HealthStatus  `json:"status"`
+	Latency      time.Duration `json:"latency"`
+	Error        string        `json:"error,omitempty"`
+	URL          string        `json:"url"`
+	Method       string        `json:"method"`
+	ResponseCode int           `json:"response_code,omitempty"`
+}
+
+type ServiceHealthInfo struct {
+	ServiceName string             `json:"service_name"`
+	Namespace   string             `json:"namespace"`
+	LastCheck   time.Time          `json:"last_check"`
+	Status      HealthStatus       `json:"status"`
+	Uptime      float64            `json:"uptime"`
+	History     []HealthCheckEntry `json:"history"`
+	URL         string             `json:"url"`
+}

@@ -115,6 +115,7 @@ export function ResourceTree({ nodes, namespace }: ResourceTreeProps) {
                                 clusterIps={node.cluster_ips}
                                 externalIps={node.external_ips}
                                 childContainerPorts={childContainerPorts}
+                                healthInfo={node.health_info}
                             />
                             {node.relatives && node.relatives.length > 0 && (
                                 <div className="ml-6 space-y-4">

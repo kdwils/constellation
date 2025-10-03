@@ -6,6 +6,8 @@ import { NamespaceDetailView } from "./components/NamespaceDetailView";
 import { GroupDetailView } from "./components/GroupDetailView";
 import { extractGroups, calculateTotalResourcesAcrossNamespaces } from "./utils/resourceStats";
 import { EmptyStates } from "./components/shared/EmptyState";
+import { ServiceHealthCard } from "./components/ServiceHealthCard";
+import { HealthDashboard } from "./components/HealthDashboard";
 
 export default function Dashboard() {
     const [data, setData] = useState<ResourceNode[]>([]);
@@ -13,7 +15,7 @@ export default function Dashboard() {
     const [error, setError] = useState<string | null>(null);
     const [selectedNamespace, setSelectedNamespace] = useState<string | null>(null);
     const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
-    const [viewMode, setViewMode] = useState<'namespace' | 'group'>('namespace');
+    const [viewMode, setViewMode] = useState<'health' | 'namespace' | 'group'>('health');
     const [selectedGroup, setSelectedGroup] = useState<string | null>(null);
 
     useEffect(() => {
@@ -31,7 +33,6 @@ export default function Dashboard() {
             try {
                 const newData = JSON.parse(event.data);
                 setData(newData);
-                setLoading(false);
 
                 if (newData.length > 0 && !selectedNamespace) {
                     setSelectedNamespace(newData[0].name);
@@ -93,7 +94,7 @@ export default function Dashboard() {
     const currentGroupResources = selectedGroup && groups.has(selectedGroup) ? groups.get(selectedGroup)! : null;
 
     // Handle view mode changes - clear selection when switching modes
-    const handleViewModeChange = (mode: 'namespace' | 'group') => {
+    const handleViewModeChange = (mode: 'health' | 'namespace' | 'group') => {
         setViewMode(mode);
         if (mode === 'namespace') {
             setSelectedGroup(null);
@@ -101,12 +102,16 @@ export default function Dashboard() {
             if (data.length > 0 && !selectedNamespace) {
                 setSelectedNamespace(data[0].name);
             }
-        } else {
+        } else if (mode === 'group') {
             setSelectedNamespace(null);
             // Auto-select first group if available
             if (groups.size > 0 && !selectedGroup) {
                 setSelectedGroup(Array.from(groups.keys())[0]);
             }
+        } else {
+            // Health mode - clear both selections
+            setSelectedNamespace(null);
+            setSelectedGroup(null);
         }
     };
 
@@ -120,6 +125,7 @@ export default function Dashboard() {
                 return <div className="w-2 h-2 bg-red-500 rounded-full" title="Disconnected" />;
         }
     };
+
 
     return (
         <div className="min-h-screen bg-gray-50 flex flex-col">
@@ -137,7 +143,7 @@ export default function Dashboard() {
                                 Kubernetes Resource Relationships
                             </p>
                         </div>
-                        <div className="text-right">
+                        <div className="flex items-center space-x-6">
                             <div className="flex space-x-6">
                                 <div className="text-center">
                                     <div className="text-lg font-bold text-gray-700">{totalNamespaces}</div>
@@ -148,6 +154,7 @@ export default function Dashboard() {
                                     <div className="text-xs text-gray-500 uppercase tracking-wide font-medium">Resources</div>
                                 </div>
                             </div>
+                            <ServiceHealthCard data={data} />
                         </div>
                     </div>
                 </div>
@@ -174,6 +181,10 @@ export default function Dashboard() {
                                         <EmptyStates.SelectNamespace hasNamespaces={data.length > 0} />
                                     </div>
                                 )
+                            ) : viewMode === 'health' ? (
+                                <div className="flex-1 bg-white">
+                                    <HealthDashboard data={data} />
+                                </div>
                             ) : (
                                 currentGroupResources && selectedGroup ? (
                                     <GroupDetailView groupName={selectedGroup} resources={currentGroupResources} />

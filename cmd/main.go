@@ -185,6 +185,13 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Setup health checker
+	healthChecker := controller.NewHealthChecker(mgr.GetClient(), stateManager)
+	if err = healthChecker.SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create health checker")
+		os.Exit(1)
+	}
+
 	// +kubebuilder:scaffold:builder
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {

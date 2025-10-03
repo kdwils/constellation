@@ -1,11 +1,12 @@
 import { useState } from "react";
 
 interface ViewModeDropdownProps {
-    value: 'namespace' | 'group';
-    onChange: (value: 'namespace' | 'group') => void;
+    value: 'health' | 'namespace' | 'group';
+    onChange: (value: 'health' | 'namespace' | 'group') => void;
 }
 
 const options = [
+    { value: 'health' as const, label: '❤️ Health Dashboard' },
     { value: 'namespace' as const, label: '📁 Namespaces' },
     { value: 'group' as const, label: '🏷️ Groups' }
 ];
