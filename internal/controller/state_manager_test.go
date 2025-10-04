@@ -611,7 +611,8 @@ func Test_serviceToHierarchyNode(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := serviceToHierarchyNode(tt.service)
+			sm := NewStateManager(make(chan bool, 1))
+			got := sm.serviceToHierarchyNode(tt.service)
 			if got.Kind != tt.want.Kind || got.Name != tt.want.Name {
 				t.Errorf("serviceToHierarchyNode() = %v, want %v", got, tt.want)
 			}
@@ -648,7 +649,8 @@ func Test_podToHierarchyNode(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := podToHierarchyNode(tt.pod)
+			sm := NewStateManager(make(chan bool, 1))
+			got := sm.podToHierarchyNode(tt.pod)
 			if got.Kind != tt.want.Kind || got.Name != tt.want.Name {
 				t.Errorf("podToHierarchyNode() = %v, want %v", got, tt.want)
 			}
@@ -684,7 +686,8 @@ func Test_httpRouteToHierarchyNode(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := httpRouteToHierarchyNode(tt.route)
+			sm := NewStateManager(make(chan bool, 1))
+			got := sm.httpRouteToHierarchyNode(tt.route)
 			if got.Kind != tt.want.Kind || got.Name != tt.want.Name {
 				t.Errorf("httpRouteToHierarchyNode() = %v, want %v", got, tt.want)
 			}
@@ -959,7 +962,8 @@ func Test_findMatchingPods(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := findMatchingPods(&tt.service, tt.pods)
+			sm := NewStateManager(make(chan bool, 1))
+			got := sm.findMatchingPods(&tt.service, tt.pods)
 			if len(got) != tt.wantLen {
 				t.Errorf("findMatchingPods() len = %v, want %v", len(got), tt.wantLen)
 			}
@@ -1018,7 +1022,8 @@ func Test_createServiceNodeWithPods(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := createServiceNodeWithPods(tt.service, tt.pods)
+			sm := NewStateManager(make(chan bool, 1))
+			got := sm.createServiceNodeWithPods(tt.service, tt.pods)
 			if got.Kind != tt.want.Kind || got.Name != tt.want.Name {
 				t.Errorf("createServiceNodeWithPods() = %v, want %v", got, tt.want)
 			}
