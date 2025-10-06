@@ -83,18 +83,12 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("WebSocket upgrade error: %v", err), http.StatusBadRequest)
 		return
 	}
-	defer func() {
-		fmt.Printf("WebSocket connection closed\n")
-		conn.Close()
-	}()
-
-	fmt.Printf("WebSocket connection established\n")
+	defer conn.Close()
 
 	stateChan := s.stateProvider.Subscribe()
 	defer s.stateProvider.Unsubscribe(stateChan)
 
 	if err := s.stateProvider.PushUpdate(conn); err != nil {
-		fmt.Printf("WebSocket initial write error: %v\n", err)
 		return
 	}
 
@@ -131,6 +125,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) staticFileHandler(fileServer http.Handler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		fmt.Printf("Static file handler: %s %s\n", r.Method, r.URL.Path)
 		fileServer.ServeHTTP(w, r)
 	}
 }

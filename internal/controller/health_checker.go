@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/url"
 	"sync"
@@ -18,10 +19,10 @@ import (
 )
 
 const (
-	defaultCheckInterval    = 30 * time.Second
-	defaultRequestTimeout   = 10 * time.Second
-	maxHistorySize          = 100
-	healthIgnoreAnnotation  = "constellation.kyledev.co/ignore"
+	defaultCheckInterval   = 30 * time.Second
+	defaultRequestTimeout  = 10 * time.Second
+	maxHistorySize         = 100
+	healthIgnoreAnnotation = "constellation.kyledev.co/ignore"
 )
 
 // HTTPClient interface for dependency injection during tests
@@ -104,19 +105,15 @@ func (hc *HealthChecker) Stop() {
 // performHealthChecks discovers probes and checks all services
 func (hc *HealthChecker) performHealthChecks(ctx context.Context) {
 	logger := log.FromContext(ctx)
-	
-	// First, discover all probe configurations
+
 	if err := hc.discoverProbes(ctx); err != nil {
 		logger.Error(err, "Failed to discover probes")
 		return
 	}
 
-	// Then perform health checks
 	hc.mu.RLock()
 	probeInfoCopy := make(map[string][]ProbeInfo)
-	for k, v := range hc.probeInfo {
-		probeInfoCopy[k] = v
-	}
+	maps.Copy(probeInfoCopy, hc.probeInfo)
 	hc.mu.RUnlock()
 
 	for serviceKey, probes := range probeInfoCopy {
@@ -125,13 +122,13 @@ func (hc *HealthChecker) performHealthChecks(ctx context.Context) {
 		}
 	}
 
-	logger.V(1).Info("Health check cycle completed")
+	// logger.V(1).Info("Health check cycle completed")
 }
 
 // discoverProbes scans the hierarchy to find services and their associated pod probes
 func (hc *HealthChecker) discoverProbes(ctx context.Context) error {
 	hierarchy := hc.stateManager.GetHierarchy()
-	
+
 	hc.mu.Lock()
 	// Clear existing probe info
 	hc.probeInfo = make(map[string][]ProbeInfo)
@@ -176,7 +173,6 @@ func (hc *HealthChecker) extractServiceProbes(ctx context.Context, serviceNode t
 	logger := log.FromContext(ctx)
 	serviceKey := fmt.Sprintf("%s/%s", namespaceName, serviceNode.Name)
 
-	// Get the actual service to understand port mappings
 	var service corev1.Service
 	err := hc.client.Get(ctx, client.ObjectKey{
 		Name:      serviceNode.Name,
@@ -191,7 +187,6 @@ func (hc *HealthChecker) extractServiceProbes(ctx context.Context, serviceNode t
 		return nil
 	}
 
-	// Find pods that match this service
 	probes := []ProbeInfo{}
 	for _, relative := range serviceNode.Relatives {
 		if relative.Kind == types.ResourceKindPod {
@@ -325,10 +320,10 @@ func (hc *HealthChecker) findServicePort(service corev1.Service, containerPort i
 
 // checkServiceProbe performs health check using the probe information
 func (hc *HealthChecker) checkServiceProbe(ctx context.Context, serviceKey string, probe ProbeInfo) {
-	logger := log.FromContext(ctx)
+	// logger := log.FromContext(ctx)
 
 	// Build the health check URL using service DNS name and service port
-	healthURL := fmt.Sprintf("%s://%s.%s.svc.cluster.local:%d%s", 
+	healthURL := fmt.Sprintf("%s://%s.%s.svc.cluster.local:%d%s",
 		probe.Scheme, probe.ServiceName, probe.Namespace, probe.ServicePort, probe.Path)
 
 	startTime := time.Now()
@@ -349,19 +344,19 @@ func (hc *HealthChecker) checkServiceProbe(ctx context.Context, serviceKey strin
 
 	hc.updateHealthData(serviceKey, probe.ServiceName, probe.Namespace, healthURL, entry)
 
-	logger.V(1).Info("Health check completed", 
-		"service", probe.ServiceName, 
-		"namespace", probe.Namespace,
-		"url", healthURL,
-		"status", status,
-		"latency", latency,
-		"responseCode", responseCode)
+	// logger.V(1).Info("Health check completed",
+	// 	"service", probe.ServiceName,
+	// 	"namespace", probe.Namespace,
+	// 	"url", healthURL,
+	// 	"status", status,
+	// 	"latency", latency,
+	// 	"responseCode", responseCode)
 }
 
 // performHTTPCheck executes the HTTP health check with specified timeout
 func (hc *HealthChecker) performHTTPCheck(ctx context.Context, healthURL string, timeout time.Duration) (types.HealthStatus, int, error) {
 	client := &http.Client{Timeout: timeout}
-	
+
 	req, err := http.NewRequestWithContext(ctx, "GET", healthURL, nil)
 	if err != nil {
 		return types.HealthStatusUnhealthy, 0, fmt.Errorf("failed to create request: %w", err)

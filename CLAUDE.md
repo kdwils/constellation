@@ -4,23 +4,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Constellation is a self-hosted dashboard that intends to provide an out- of-the-box view of the current state of traffic to a pod.
+Constellation is a simple, self-hosted health check dashboard for Kubernetes clusters that requires minimal configuration.
 
-Initial MVP state:
-* Achieve a relationship between namespaces, ingresses, httproutes, services, and pods.
-* Namespaces are always the parent resource
-* Example valid relationships
-    - namespace -> ingress -> service -> pod(s) traffic can be route to pod via ingress or in cluster dns
-    - namepsace -> httproute -> service -> pod(s) traffic can be route to pod via httproute or in cluster dns
-    - namespace -> service -> pod(s) traffic can be routed to pod via in cluster dns
-    - namespace -> pod(s) has no way to route traffic to a pod
+**Purpose**: Provide an out-of-the-box view of pod health and traffic routing paths with zero or minimal setup.
 
-Future state: 
-* Provide a healtcheck dashboard that shows the relationship between ingress to a pod.
-* Provide configuration via annotations on resources
-* The contents of `thoughts.md`
+**Key Goals**:
+* Simple health monitoring dashboard that works immediately after deployment
+* Visualize how traffic reaches pods (ingress → service → pod, httproute → service → pod, or direct service → pod)
+* Minimal configuration required - works with sensible defaults
+* Optional configuration via annotations on resources for customization
+* Clear visibility into pod health status and routing paths
 
-It is written in Go.
+**Architecture**: Written in Go with a Vue frontend.
 
 ## Project Structure
 
@@ -32,10 +27,11 @@ Static files are served at `/` and default to `index.html` if no static file is 
 
 ## Architecture
 
-This is a Kubernetes resource monitoring tool with:
-- **Backend**: Go controller-runtime based server that watches Kubernetes API and serves JSON state
-- **Frontend**: React application that visualizes the resource relationships
-- **Data Flow**: Kubernetes API → Go controllers → StateManager → JSON state endpoint → React frontend
+This is a simple Kubernetes health check dashboard with:
+- **Backend**: Go controller-runtime based server that watches Kubernetes API and serves pod health and routing state
+- **Frontend**: Vue application that displays health status and traffic routing paths
+- **Data Flow**: Kubernetes API → Go controllers → StateManager → JSON state endpoint → Vue frontend
+- **Configuration**: Works out-of-the-box with sensible defaults, optional annotation-based customization
 
 ### Core Components
 
@@ -47,27 +43,27 @@ This is a Kubernetes resource monitoring tool with:
 - `internal/controller/pod_controller.go` - Pod monitoring  
 - `internal/controller/httproute_controller.go` - HTTPRoute monitoring
 
-**State Management**: `internal/controller/state_manager.go` orchestrates cluster state
-- Maintains in-memory cache of resource relationships
-- Provides real-time updates via WebSocket
-- Builds initial state on startup
+**State Management**: `internal/controller/state_manager.go` orchestrates cluster health state
+- Maintains in-memory cache of pod health and traffic routing paths
+- Provides real-time health updates via WebSocket
+- Builds initial health state on startup with zero configuration required
 
 **HTTP Server**: `internal/server/server.go` provides dual-mode server
-- JSON API endpoint for cluster state at `/state`
-- WebSocket endpoint for real-time updates at `/ws`
-- Static file serving for React frontend
+- JSON API endpoint for cluster health state at `/state`
+- WebSocket endpoint for real-time health updates at `/ws`
+- Static file serving for Vue dashboard frontend
 - Health check endpoint at `/healthz`
 
-**Types**: `internal/types/resources.go` defines the data structures for resource relationships
+**Types**: `internal/types/resources.go` defines the data structures for health state and traffic routing paths
 
 ### Interface-based Design
 
 All components use interfaces for dependency injection and testability:
 
 **StateProvider Interface**: Used by the server to interact with state management
-- `GetHierarchy()` - Returns current cluster state
-- `Subscribe()` - Get update channel for real-time notifications
-- `PushUpdate()` - Send updates via WebSocket
+- `GetHierarchy()` - Returns current cluster health state and routing paths
+- `Subscribe()` - Get update channel for real-time health notifications
+- `PushUpdate()` - Send health updates via WebSocket
 
 **Controller Interfaces**: Each controller implements reconcile.Reconciler
 - Dependency injection of StateManager through constructor functions
@@ -261,6 +257,123 @@ func handleOperation() error {
 * Only add comments that are impactful
 * NEVER write obvious comments that restate what the code does
 * **Create reusable components instead of repeating code patterns** - If you find yourself repeating the same conditional logic or styling patterns multiple times, extract it into a reusable component
+
+## Vue Development Standards
+
+### Component Communication Principles
+
+**Props Down, Events Up**: Always follow unidirectional data flow
+- Parent components pass data to children via **props**
+- Child components communicate with parents via **emitted events**
+- Never mutate props directly in child components
+
+### Props Guidelines
+
+**Define Props Explicitly**:
+```typescript
+// Use TypeScript with proper type definitions
+interface Props {
+  userId: string
+  isActive?: boolean
+  items: Array<Item>
+}
+
+const props = defineProps<Props>()
+// Or with defaults:
+const props = withDefaults(defineProps<Props>(), {
+  isActive: false
+})
+```
+
+**Props Best Practices**:
+- Use descriptive, specific names (prefer `userName` over `name`)
+- Make props readonly - never reassign or mutate
+- Use computed properties or local refs to transform prop values
+- Validate prop types in TypeScript interfaces
+- Provide default values for optional props
+
+### Event Emission
+
+**Emit Events for Child-to-Parent Communication**:
+```typescript
+// Define emits explicitly
+const emit = defineEmits<{
+  update: [value: string]
+  delete: [id: number]
+  submit: [data: FormData]
+}>()
+
+// Emit with type safety
+emit('update', newValue)
+```
+
+**Event Naming**:
+- Use kebab-case for event names in templates: `@user-updated`
+- Use camelCase in TypeScript: `emit('userUpdated')`
+- Be descriptive and action-oriented: `submit`, `delete`, `update`
+
+### State Management
+
+**Local State**:
+- Use `ref()` or `reactive()` for component-local state
+- Keep state as close to where it's used as possible
+- Don't lift state up unless multiple components need it
+
+**Computed Properties**:
+- Use `computed()` for derived state
+- Never mutate data inside computed properties
+- Prefer computed over methods for values that depend on reactive state
+
+**Avoid Direct Mutations**:
+```typescript
+// ❌ BAD - Mutating prop
+const props = defineProps<{ user: User }>()
+props.user.name = 'New Name'
+
+// ✅ GOOD - Emit event to parent
+const emit = defineEmits<{ updateUser: [user: User] }>()
+emit('updateUser', { ...props.user, name: 'New Name' })
+```
+
+### Component Structure
+
+**Composition API (Script Setup)**:
+- Always use `<script setup lang="ts">`
+- Order: imports, props, emits, composables, computed, methods, lifecycle hooks
+- Extract reusable logic into composables
+
+**Template Best Practices**:
+- Keep templates simple and readable
+- Extract complex logic to computed properties or methods
+- Use v-bind shorthand (`:`) and v-on shorthand (`@`)
+- Prefer `v-if` over `v-show` for conditional rendering unless toggling frequently
+
+### Avoid These Anti-Patterns
+
+**❌ Never use `$parent` or `$refs` for component communication**
+- Use props and events instead
+
+**❌ Don't use `v-model` on props directly**
+- Create a local ref or use `defineModel()` (Vue 3.4+)
+
+**❌ Don't pass callbacks as props**
+- Emit events instead
+
+**❌ Avoid deeply nested prop drilling**
+- Use provide/inject or a store for deeply nested data
+
+### TypeScript Integration
+
+- Define interfaces for all props, emits, and component-specific types
+- Use generic types for reusable components
+- Enable strict mode in TypeScript config
+- Avoid `any` types - use `unknown` if type is truly unknown
+
+### Composition Over Inheritance
+
+- Use composables to share logic between components
+- Prefer small, focused components over large multi-purpose ones
+- Extract reusable UI patterns into components
 
 <!-- BACKLOG.MD GUIDELINES START -->
 # Instructions for the usage of Backlog.md CLI Tool

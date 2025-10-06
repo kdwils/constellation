@@ -11,7 +11,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/log"
 	gatewayv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
 
 	"github.com/kdwils/constellation/internal/types"
@@ -263,50 +262,50 @@ func (sm *StateManager) processHTTPRouteUpdate(route gatewayv1beta1.HTTPRoute, s
 }
 
 func (sm *StateManager) UpdateNamespace(ctx context.Context, ns corev1.Namespace) {
-	logger := log.FromContext(ctx)
-	logger.V(1).Info("Updating namespace", "namespace", ns.Name)
+	// logger := log.FromContext(ctx)
+	// logger.V(1).Info("Updating namespace", "namespace", ns.Name)
 	sm.eventChan <- StateUpdateEvent{Type: NamespaceUpdate, Namespace: ns}
 }
 
 func (sm *StateManager) DeleteNamespace(ctx context.Context, name string) {
-	logger := log.FromContext(ctx)
-	logger.V(1).Info("Deleting namespace", "namespace", name)
+	// logger := log.FromContext(ctx)
+	// logger.V(1).Info("Deleting namespace", "namespace", name)
 	sm.eventChan <- StateUpdateEvent{Type: NamespaceDelete, Name: name}
 }
 
 func (sm *StateManager) UpdateService(ctx context.Context, svc corev1.Service, pods []corev1.Pod) {
-	logger := log.FromContext(ctx)
-	logger.V(1).Info("Updating service", "service", svc.Name, "namespace", svc.Namespace, "podCount", len(pods))
+	// logger := log.FromContext(ctx)
+	// logger.V(1).Info("Updating service", "service", svc.Name, "namespace", svc.Namespace, "podCount", len(pods))
 	sm.eventChan <- StateUpdateEvent{Type: ServiceUpdate, Service: svc, Pods: pods}
 }
 
 func (sm *StateManager) DeleteService(ctx context.Context, name, namespace string) {
-	logger := log.FromContext(ctx)
-	logger.V(1).Info("Deleting service", "service", name, "namespace", namespace)
+	// logger := log.FromContext(ctx)
+	// logger.V(1).Info("Deleting service", "service", name, "namespace", namespace)
 	sm.eventChan <- StateUpdateEvent{Type: ServiceDelete, Name: name, Ns: namespace}
 }
 
 func (sm *StateManager) UpdatePod(ctx context.Context, pod corev1.Pod) {
-	logger := log.FromContext(ctx)
-	logger.V(1).Info("Updating pod", "pod", pod.Name, "namespace", pod.Namespace, "phase", pod.Status.Phase)
+	// logger := log.FromContext(ctx)
+	// logger.V(1).Info("Updating pod", "pod", pod.Name, "namespace", pod.Namespace, "phase", pod.Status.Phase)
 	sm.eventChan <- StateUpdateEvent{Type: PodUpdate, Pod: pod}
 }
 
 func (sm *StateManager) DeletePod(ctx context.Context, name, namespace string) {
-	logger := log.FromContext(ctx)
-	logger.V(1).Info("Deleting pod", "pod", name, "namespace", namespace)
+	// logger := log.FromContext(ctx)
+	// logger.V(1).Info("Deleting pod", "pod", name, "namespace", namespace)
 	sm.eventChan <- StateUpdateEvent{Type: PodDelete, Name: name, Ns: namespace}
 }
 
 func (sm *StateManager) UpdateHTTPRoute(ctx context.Context, route gatewayv1beta1.HTTPRoute, services []corev1.Service, pods []corev1.Pod) {
-	logger := log.FromContext(ctx)
-	logger.V(1).Info("Updating httproute", "httproute", route.Name, "namespace", route.Namespace, "serviceCount", len(services), "podCount", len(pods))
+	// logger := log.FromContext(ctx)
+	// logger.V(1).Info("Updating httproute", "httproute", route.Name, "namespace", route.Namespace, "serviceCount", len(services), "podCount", len(pods))
 	sm.eventChan <- StateUpdateEvent{Type: HTTPRouteUpdate, HTTPRoute: route, Services: services, Pods: pods}
 }
 
 func (sm *StateManager) DeleteHTTPRoute(ctx context.Context, name, namespace string) {
-	logger := log.FromContext(ctx)
-	logger.V(1).Info("Deleting httproute", "httproute", name, "namespace", namespace)
+	// logger := log.FromContext(ctx)
+	// logger.V(1).Info("Deleting httproute", "httproute", name, "namespace", namespace)
 	sm.eventChan <- StateUpdateEvent{Type: HTTPRouteDelete, Name: name, Ns: namespace}
 }
 
@@ -810,9 +809,9 @@ func (sm *StateManager) updateServiceHealthInHierarchy(serviceName, namespace st
 
 // updateNodeHealthInfo recursively updates health info in hierarchy nodes
 func (sm *StateManager) updateNodeHealthInfo(node *types.HierarchyNode, serviceName, namespace string, healthInfo *types.ServiceHealthInfo) {
-	if node.Kind == types.ResourceKindService && 
-		node.Name == serviceName && 
-		node.Namespace != nil && 
+	if node.Kind == types.ResourceKindService &&
+		node.Name == serviceName &&
+		node.Namespace != nil &&
 		*node.Namespace == namespace {
 		node.HealthInfo = healthInfo
 	}

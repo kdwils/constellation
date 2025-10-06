@@ -205,6 +205,9 @@ func main() {
 
 	ctx := ctrl.SetupSignalHandler()
 
+	// Start state manager immediately so it can process updates
+	go stateManager.Start(ctx)
+
 	srv := server.NewServer(stateManager, staticDir, serverPort, updateChan)
 	go func() {
 		setupLog.Info("starting constellation server", "port", serverPort, "static-dir", staticDir)
@@ -237,8 +240,6 @@ func main() {
 	}
 
 	setupLog.Info("initial cluster state built successfully")
-
-	go stateManager.Start(ctx)
 
 	<-ctx.Done()
 }
