@@ -1,13 +1,13 @@
 <script setup lang="ts">
-import { ref, onMounted, computed, watch } from 'vue'
+import { computed } from 'vue'
 import ServiceCard from './components/ServiceCard.vue'
 import { websocket } from './composables/websocket'
 import { transformToServiceCards } from './composables/useHealthData'
-import type { HierarchyNode, ServiceCardData } from './types'
+import type { ServiceCardData } from './types'
 
-const hierarchyData = ref<HierarchyNode[]>([])
-const isLoading = ref(true)
-const { isConnected, lastMessage } = websocket()
+const { lastMessage } = websocket()
+const hierarchyData = computed(() => lastMessage.value || [])
+const isLoading = computed(() => !lastMessage.value)
 
 const serviceCards = computed<ServiceCardData[]>(() => {
   return transformToServiceCards(hierarchyData.value)
@@ -31,24 +31,6 @@ const getStatusColor = (status: string): string => {
   if (status === 'unhealthy') return '#f87171'
   return '#fbbf24'
 }
-
-onMounted(async () => {
-  try {
-    const response = await fetch('/state')
-    const data = await response.json()
-    hierarchyData.value = data
-  } catch (error) {
-    console.error('Failed to fetch initial state:', error)
-  } finally {
-    isLoading.value = false
-  }
-})
-
-watch(lastMessage, (newMessage) => {
-  if (newMessage) {
-    hierarchyData.value = newMessage
-  }
-})
 </script>
 
 <template>
@@ -90,15 +72,6 @@ watch(lastMessage, (newMessage) => {
           :service="service"
         />
       </div>
-    </div>
-
-    <!-- Connection Status -->
-    <div class="fixed bottom-4 right-4 flex items-center gap-2 bg-white border-2 border-gray-900 rounded-full px-4 py-2 text-sm">
-      <div
-        class="w-2 h-2 rounded-full"
-        :class="isConnected ? 'bg-green-400' : 'bg-red-400'"
-      />
-      <span>{{ isConnected ? 'Connected' : 'Disconnected' }}</span>
     </div>
   </div>
 </template>

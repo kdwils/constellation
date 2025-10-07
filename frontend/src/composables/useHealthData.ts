@@ -1,11 +1,11 @@
-import type { HierarchyNode, ServiceCardData, PodHealthData } from '../types'
+import type { HierarchyNode, ServiceCardData, ServiceHealthData } from '../types'
 
 export function transformToServiceCards(hierarchyNodes: HierarchyNode[]): ServiceCardData[] {
   const serviceCards: ServiceCardData[] = []
 
   for (const node of hierarchyNodes) {
     if (node.kind === 'Service' && node.health_info) {
-      const podHealthStates = extractPodHealthStates(node)
+      const serviceHealth = extractServiceHealth(node)
 
       serviceCards.push({
         name: node.name,
@@ -14,7 +14,7 @@ export function transformToServiceCards(hierarchyNodes: HierarchyNode[]): Servic
         lastUpdate: node.health_info.last_check,
         latency: calculateAverageLatency(node.health_info.history),
         url: node.health_info.url,
-        podHealthStates
+        serviceHealth
       })
     }
 
@@ -26,32 +26,20 @@ export function transformToServiceCards(hierarchyNodes: HierarchyNode[]): Servic
   return serviceCards
 }
 
-function extractPodHealthStates(serviceNode: HierarchyNode): PodHealthData[] {
-  const podStates: PodHealthData[] = []
-
-  if (!serviceNode.relatives) {
-    return podStates
-  }
-
+function extractServiceHealth(serviceNode: HierarchyNode): ServiceHealthData {
   const serviceHealthInfo = serviceNode.health_info
+
   if (!serviceHealthInfo) {
-    return podStates
-  }
-
-  const latestEntry = serviceHealthInfo.history && serviceHealthInfo.history.length > 0
-    ? serviceHealthInfo.history[serviceHealthInfo.history.length - 1]
-    : undefined
-
-  for (const relative of serviceNode.relatives) {
-    if (relative.kind === 'Pod') {
-      podStates.push({
-        status: serviceHealthInfo.status,
-        healthCheckEntry: latestEntry
-      })
+    return {
+      status: 'unknown',
+      healthCheckHistory: []
     }
   }
 
-  return podStates
+  return {
+    status: serviceHealthInfo.status,
+    healthCheckHistory: serviceHealthInfo.history || []
+  }
 }
 
 function calculateAverageLatency(history: Array<{ latency: number }>): number {
@@ -61,5 +49,6 @@ function calculateAverageLatency(history: Array<{ latency: number }>): number {
 
   const recentHistory = history.slice(-10)
   const sum = recentHistory.reduce((acc, entry) => acc + entry.latency, 0)
-  return Math.round(sum / recentHistory.length)
+  const averageNanoseconds = sum / recentHistory.length
+  return Math.round(averageNanoseconds / 1_000_000)
 }

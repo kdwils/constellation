@@ -29,9 +29,9 @@ export interface HierarchyNode {
   health_info?: ServiceHealthInfo
 }
 
-export interface PodHealthData {
+export interface ServiceHealthData {
   status: HealthStatus
-  healthCheckEntry?: HealthCheckEntry
+  healthCheckHistory: HealthCheckEntry[]
 }
 
 export interface ServiceCardData {
@@ -41,5 +41,5 @@ export interface ServiceCardData {
   lastUpdate: string
   latency: number
   url: string
-  podHealthStates: PodHealthData[]
+  serviceHealth: ServiceHealthData
 }
