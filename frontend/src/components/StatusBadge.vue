@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { getStatusColor } from '../utils/statusColors'
 import type { HealthStatus } from '../types'
 
 interface Props {
@@ -6,12 +7,6 @@ interface Props {
 }
 
 defineProps<Props>()
-
-const getStatusColor = (status: HealthStatus): string => {
-  if (status === 'healthy') return '#4ade80'
-  if (status === 'unhealthy') return '#f87171'
-  return '#fbbf24'
-}
 </script>
 
 <template>

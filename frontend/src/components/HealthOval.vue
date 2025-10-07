@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import Tooltip from './Tooltip.vue'
-import type { HealthCheckEntry, HealthStatus } from '../types'
+import { getStatusColor, getStatusTextColor, EMPTY_STATUS_COLOR } from '../utils/statusColors'
+import type { HealthCheckEntry } from '../types'
 
 interface Props {
   entry?: HealthCheckEntry
@@ -11,12 +12,29 @@ interface Props {
 const props = defineProps<Props>()
 const showTooltip = ref(false)
 
-const getHealthColor = (status?: HealthStatus): string => {
-  if (!status) return '#d1d5db'
-  if (status === 'healthy') return '#4ade80'
-  if (status === 'unhealthy') return '#f87171'
-  return '#fbbf24'
-}
+const backgroundColor = computed(() => {
+  if (props.isEmpty) {
+    return EMPTY_STATUS_COLOR
+  }
+
+  if (!props.entry?.status) {
+    return EMPTY_STATUS_COLOR
+  }
+
+  return getStatusColor(props.entry.status)
+})
+
+const isInteractive = computed(() => {
+  return !props.isEmpty && !!props.entry
+})
+
+const statusTextColor = computed(() => {
+  if (!props.entry?.status) {
+    return ''
+  }
+
+  return getStatusTextColor(props.entry.status)
+})
 
 const formatTimestamp = (timestamp: string): string => {
   const date = new Date(timestamp)
@@ -26,17 +44,14 @@ const formatTimestamp = (timestamp: string): string => {
 const formatLatency = (latency: number): string => {
   return `${latency}ms`
 }
-
-const backgroundColor = props.isEmpty ? '#d1d5db' : getHealthColor(props.entry?.status)
-const isInteractive = !props.isEmpty && props.entry
 </script>
 
 <template>
   <div
     class="relative"
     :class="{ 'cursor-pointer': isInteractive }"
-    @mouseenter="isInteractive ? showTooltip = true : null"
-    @mouseleave="isInteractive ? showTooltip = false : null"
+    @mouseenter="showTooltip = isInteractive"
+    @mouseleave="showTooltip = false"
   >
     <div
       class="w-3 h-10 rounded-full border-2 border-gray-900 transition-colors duration-300"
@@ -52,11 +67,7 @@ const isInteractive = !props.isEmpty && props.entry
         <div class="flex flex-col gap-1 text-xs">
           <div class="flex justify-between gap-4">
             <span class="text-gray-600">Status:</span>
-            <span class="font-medium" :class="{
-              'text-green-600': entry.status === 'healthy',
-              'text-red-600': entry.status === 'unhealthy',
-              'text-yellow-600': entry.status === 'unknown'
-            }">
+            <span class="font-medium" :class="statusTextColor">
               {{ entry.status }}
             </span>
           </div>
