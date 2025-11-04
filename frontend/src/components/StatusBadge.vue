@@ -11,7 +11,7 @@ defineProps<Props>()
 
 <template>
   <div
-    class="px-4 py-1.5 rounded-full border-2 border-gray-900 text-sm font-medium capitalize text-gray-900"
+    class="px-4 py-1.5 rounded-full border-2 border-gray-700 text-sm font-medium capitalize text-gray-900"
     :style="{ backgroundColor: getStatusColor(status) }"
   >
     {{ status }}

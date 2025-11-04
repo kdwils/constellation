@@ -30,7 +30,9 @@ Static files are served at `/` and default to `index.html` if no static file is 
 This is a simple Kubernetes health check dashboard with:
 - **Backend**: Go controller-runtime based server that watches Kubernetes API and serves pod health and routing state
 - **Frontend**: Vue application that displays health status and traffic routing paths
-- **Data Flow**: Kubernetes API → Go controllers → StateManager → JSON state endpoint → Vue frontend
+- **Data Flow**:
+  - Passive state: Kubernetes API → Controllers (reconcile) → StateManager → `/state` endpoint + WebSocket
+  - Active health: HealthChecker (periodic HTTP checks) → StateManager → WebSocket updates
 - **Configuration**: Works out-of-the-box with sensible defaults, optional annotation-based customization
 
 ### Core Components
@@ -40,13 +42,21 @@ This is a simple Kubernetes health check dashboard with:
 **Controllers**: Individual reconcilers for each Kubernetes resource type:
 - `internal/controller/namespace_controller.go` - Namespace monitoring
 - `internal/controller/service_controller.go` - Service monitoring
-- `internal/controller/pod_controller.go` - Pod monitoring  
+- `internal/controller/pod_controller.go` - Pod monitoring
 - `internal/controller/httproute_controller.go` - HTTPRoute monitoring
 
 **State Management**: `internal/controller/state_manager.go` orchestrates cluster health state
 - Maintains in-memory cache of pod health and traffic routing paths
 - Provides real-time health updates via WebSocket
 - Builds initial health state on startup with zero configuration required
+
+**Health Monitoring**: `internal/controller/health_checker.go` performs active health checks
+- Executes HTTP health checks based on pod readiness/liveness probe configurations
+- Periodically polls service endpoints to verify availability
+- Stores health history and status per service
+- Integrates with StateManager to push health status updates
+- Configurable check intervals and timeouts
+- Supports annotation-based opt-out via `constellation.kyledev.co/ignore`
 
 **HTTP Server**: `internal/server/server.go` provides dual-mode server
 - JSON API endpoint for cluster health state at `/state`
@@ -82,9 +92,12 @@ All components use interfaces for dependency injection and testability:
 - Main backend entry: `cmd/main.go`
 - Server implementation: `internal/server/server.go`
 - State management: `internal/controller/state_manager.go`
+- Health checker: `internal/controller/health_checker.go`
 - Resource controllers: `internal/controller/*_controller.go`
 - Type definitions: `internal/types/resources.go`
-- Frontend components: `frontend/src/`
+- Cache utilities: `internal/cache/cache.go`
+- Frontend components: `frontend/src/components/`
+- Frontend entry: `frontend/src/main.ts`
 - Module definition: `go.mod`
 
 ## Development Commands
@@ -104,7 +117,16 @@ go run cmd/main.go --static-dir frontend/dist --server-port 8080
 ### Frontend Development
 ```bash
 cd frontend && npm run dev            # Run frontend development server
+
+# For full stack development, run both:
+# Terminal 1: Backend with hot reload
+go run cmd/main.go --static-dir frontend/dist --server-port 8080
+
+# Terminal 2: Frontend dev server (auto-proxies /ws and /state to backend)
+cd frontend && npm run dev
 ```
+
+**Note**: The Vite dev server is configured to proxy WebSocket (`/ws`) and API (`/state`) requests to the backend server at `localhost:8080`.
 
 ### Building
 ```bash

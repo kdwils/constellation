@@ -36,43 +36,46 @@ const overallStatus = computed<HealthStatus>(() => {
 </script>
 
 <template>
-  <div class="min-h-screen bg-gray-100 p-8">
+  <div class="h-screen bg-gray-900 overflow-hidden">
     <!-- Outer Container -->
-    <div class="border-[3px] border-gray-900 rounded-3xl bg-white p-8 min-h-[calc(100vh-4rem)]">
+    <div class="h-full flex flex-col">
       <!-- Header -->
-      <header class="mb-8 border-[3px] border-gray-900 rounded-2xl p-6 bg-gray-50">
+      <header class="mb-8 border-[3px] border-gray-700 rounded-2xl p-6 bg-gray-800 flex-shrink-0 mx-6 mt-6">
         <div class="flex justify-between items-center">
           <div>
-            <h1 class="text-4xl font-bold text-gray-900">
+            <h1 class="text-4xl font-bold text-gray-100">
               Constellation
             </h1>
-            <p class="text-sm text-gray-600 mt-2">A simple health check dashboard</p>
+            <p class="text-sm text-gray-400 mt-2">A simple health check dashboard</p>
           </div>
           <div
-            class="w-8 h-8 rounded-full border-2 border-gray-900 transition-colors duration-300"
+            class="w-8 h-8 rounded-full border-2 border-gray-700 transition-colors duration-300"
             :style="{ backgroundColor: getStatusColor(overallStatus) }"
             :title="`Overall status: ${overallStatus}`"
           />
         </div>
       </header>
 
-      <!-- Loading State -->
-      <div v-if="isLoading" class="text-center py-20">
-        <p class="text-gray-600">Loading health data...</p>
-      </div>
+      <!-- Scrollable Content Area -->
+      <div class="flex-1 overflow-y-auto px-6 pt-6">
+        <!-- Loading State -->
+        <div v-if="isLoading" class="text-center py-20">
+          <p class="text-gray-400">Loading health data...</p>
+        </div>
 
-      <!-- Empty State -->
-      <div v-else-if="serviceCards.length === 0" class="text-center py-20">
-        <p class="text-gray-600">No services found</p>
-      </div>
+        <!-- Empty State -->
+        <div v-else-if="serviceCards.length === 0" class="text-center py-20">
+          <p class="text-gray-400">No services found</p>
+        </div>
 
-      <!-- Service Cards Grid -->
-      <div v-else class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        <ServiceCard
-          v-for="service in serviceCards"
-          :key="`${service.namespace}-${service.name}`"
-          :service="service"
-        />
+        <!-- Service Cards Grid -->
+        <div v-else class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 pb-6">
+          <ServiceCard
+            v-for="service in serviceCards"
+            :key="`${service.namespace}-${service.name}`"
+            :service="service"
+          />
+        </div>
       </div>
     </div>
   </div>
