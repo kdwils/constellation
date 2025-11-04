@@ -43,7 +43,8 @@ const formatTimestamp = (timestamp: string): string => {
 }
 
 const formatLatency = (latency: number): string => {
-  return `${latency}ms`
+  const ms = Math.round(latency / 1_000_000)
+  return `${ms}ms`
 }
 </script>
 
