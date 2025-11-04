@@ -11,7 +11,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/log"
 	gatewayv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
 
 	"github.com/kdwils/constellation/internal/types"
@@ -50,6 +49,7 @@ type StateManager struct {
 	subMu       sync.RWMutex
 	updateChan  chan bool
 	eventChan   chan StateUpdateEvent
+	healthData  map[string]*types.ServiceHealthInfo
 }
 
 // NewStateManager creates a new state manager
@@ -59,6 +59,7 @@ func NewStateManager(updateChan chan bool) *StateManager {
 		subscribers: make(map[chan []types.HierarchyNode]bool),
 		updateChan:  updateChan,
 		eventChan:   make(chan StateUpdateEvent, 100),
+		healthData:  make(map[string]*types.ServiceHealthInfo),
 	}
 }
 
@@ -187,7 +188,7 @@ func (sm *StateManager) processServiceUpdate(service corev1.Service, pods []core
 	}
 
 	httpRouteIndex := findHTTPRouteForService(sm.hierarchy[namespaceIndex], service.Name)
-	serviceNode := createServiceNodeWithPods(service, pods)
+	serviceNode := sm.createServiceNodeWithPods(service, pods)
 
 	if httpRouteIndex != -1 {
 		sm.hierarchy[namespaceIndex].Relatives[httpRouteIndex].Relatives = append(
@@ -212,7 +213,7 @@ func (sm *StateManager) processPodUpdate(pod corev1.Pod) {
 		return
 	}
 
-	podNode := podToHierarchyNode(pod)
+	podNode := sm.podToHierarchyNode(pod)
 
 	foundMatchingService := false
 	for i := range sm.hierarchy[namespaceIndex].Relatives {
@@ -255,56 +256,56 @@ func (sm *StateManager) processHTTPRouteUpdate(route gatewayv1beta1.HTTPRoute, s
 		return
 	}
 
-	routeNode := httpRouteToHierarchyNode(route)
-	routeNode.Relatives = findServicesForHTTPRoute(route, services, pods)
+	routeNode := sm.httpRouteToHierarchyNode(route)
+	routeNode.Relatives = sm.findServicesForHTTPRoute(route, services, pods)
 	sm.hierarchy[namespaceIndex].Relatives = append(sm.hierarchy[namespaceIndex].Relatives, routeNode)
 }
 
 func (sm *StateManager) UpdateNamespace(ctx context.Context, ns corev1.Namespace) {
-	logger := log.FromContext(ctx)
-	logger.V(1).Info("Updating namespace", "namespace", ns.Name)
+	// logger := log.FromContext(ctx)
+	// logger.V(1).Info("Updating namespace", "namespace", ns.Name)
 	sm.eventChan <- StateUpdateEvent{Type: NamespaceUpdate, Namespace: ns}
 }
 
 func (sm *StateManager) DeleteNamespace(ctx context.Context, name string) {
-	logger := log.FromContext(ctx)
-	logger.V(1).Info("Deleting namespace", "namespace", name)
+	// logger := log.FromContext(ctx)
+	// logger.V(1).Info("Deleting namespace", "namespace", name)
 	sm.eventChan <- StateUpdateEvent{Type: NamespaceDelete, Name: name}
 }
 
 func (sm *StateManager) UpdateService(ctx context.Context, svc corev1.Service, pods []corev1.Pod) {
-	logger := log.FromContext(ctx)
-	logger.V(1).Info("Updating service", "service", svc.Name, "namespace", svc.Namespace, "podCount", len(pods))
+	// logger := log.FromContext(ctx)
+	// logger.V(1).Info("Updating service", "service", svc.Name, "namespace", svc.Namespace, "podCount", len(pods))
 	sm.eventChan <- StateUpdateEvent{Type: ServiceUpdate, Service: svc, Pods: pods}
 }
 
 func (sm *StateManager) DeleteService(ctx context.Context, name, namespace string) {
-	logger := log.FromContext(ctx)
-	logger.V(1).Info("Deleting service", "service", name, "namespace", namespace)
+	// logger := log.FromContext(ctx)
+	// logger.V(1).Info("Deleting service", "service", name, "namespace", namespace)
 	sm.eventChan <- StateUpdateEvent{Type: ServiceDelete, Name: name, Ns: namespace}
 }
 
 func (sm *StateManager) UpdatePod(ctx context.Context, pod corev1.Pod) {
-	logger := log.FromContext(ctx)
-	logger.V(1).Info("Updating pod", "pod", pod.Name, "namespace", pod.Namespace, "phase", pod.Status.Phase)
+	// logger := log.FromContext(ctx)
+	// logger.V(1).Info("Updating pod", "pod", pod.Name, "namespace", pod.Namespace, "phase", pod.Status.Phase)
 	sm.eventChan <- StateUpdateEvent{Type: PodUpdate, Pod: pod}
 }
 
 func (sm *StateManager) DeletePod(ctx context.Context, name, namespace string) {
-	logger := log.FromContext(ctx)
-	logger.V(1).Info("Deleting pod", "pod", name, "namespace", namespace)
+	// logger := log.FromContext(ctx)
+	// logger.V(1).Info("Deleting pod", "pod", name, "namespace", namespace)
 	sm.eventChan <- StateUpdateEvent{Type: PodDelete, Name: name, Ns: namespace}
 }
 
 func (sm *StateManager) UpdateHTTPRoute(ctx context.Context, route gatewayv1beta1.HTTPRoute, services []corev1.Service, pods []corev1.Pod) {
-	logger := log.FromContext(ctx)
-	logger.V(1).Info("Updating httproute", "httproute", route.Name, "namespace", route.Namespace, "serviceCount", len(services), "podCount", len(pods))
+	// logger := log.FromContext(ctx)
+	// logger.V(1).Info("Updating httproute", "httproute", route.Name, "namespace", route.Namespace, "serviceCount", len(services), "podCount", len(pods))
 	sm.eventChan <- StateUpdateEvent{Type: HTTPRouteUpdate, HTTPRoute: route, Services: services, Pods: pods}
 }
 
 func (sm *StateManager) DeleteHTTPRoute(ctx context.Context, name, namespace string) {
-	logger := log.FromContext(ctx)
-	logger.V(1).Info("Deleting httproute", "httproute", name, "namespace", namespace)
+	// logger := log.FromContext(ctx)
+	// logger.V(1).Info("Deleting httproute", "httproute", name, "namespace", namespace)
 	sm.eventChan <- StateUpdateEvent{Type: HTTPRouteDelete, Name: name, Ns: namespace}
 }
 
@@ -370,8 +371,8 @@ func namespaceToHierarchyNode(ns corev1.Namespace) types.HierarchyNode {
 	}
 }
 
-func toHierarchyNode(kind types.ResourceKind, name, namespace string, metadata types.ResourceMetadata) types.HierarchyNode {
-	return types.HierarchyNode{
+func (sm *StateManager) toHierarchyNode(kind types.ResourceKind, name, namespace string, metadata types.ResourceMetadata) types.HierarchyNode {
+	node := types.HierarchyNode{
 		Kind:            kind,
 		Name:            name,
 		Namespace:       stringToPtr(namespace),
@@ -394,6 +395,16 @@ func toHierarchyNode(kind types.ResourceKind, name, namespace string, metadata t
 		DisplayName:     metadata.DisplayName,
 		Ignore:          metadata.Ignore,
 	}
+
+	// Add health info if this is a service
+	if kind == types.ResourceKindService {
+		serviceKey := fmt.Sprintf("%s/%s", namespace, name)
+		if healthInfo, exists := sm.healthData[serviceKey]; exists {
+			node.HealthInfo = healthInfo
+		}
+	}
+
+	return node
 }
 
 func stringToPtr(s string) *string {
@@ -403,19 +414,19 @@ func stringToPtr(s string) *string {
 	return &s
 }
 
-func serviceToHierarchyNode(svc corev1.Service) types.HierarchyNode {
+func (sm *StateManager) serviceToHierarchyNode(svc corev1.Service) types.HierarchyNode {
 	metadata := extractServiceMetadata(svc)
-	return toHierarchyNode(types.ResourceKindService, svc.Name, svc.Namespace, metadata)
+	return sm.toHierarchyNode(types.ResourceKindService, svc.Name, svc.Namespace, metadata)
 }
 
-func podToHierarchyNode(pod corev1.Pod) types.HierarchyNode {
+func (sm *StateManager) podToHierarchyNode(pod corev1.Pod) types.HierarchyNode {
 	metadata := extractPodMetadata(pod)
-	return toHierarchyNode(types.ResourceKindPod, pod.Name, pod.Namespace, metadata)
+	return sm.toHierarchyNode(types.ResourceKindPod, pod.Name, pod.Namespace, metadata)
 }
 
-func httpRouteToHierarchyNode(route gatewayv1beta1.HTTPRoute) types.HierarchyNode {
+func (sm *StateManager) httpRouteToHierarchyNode(route gatewayv1beta1.HTTPRoute) types.HierarchyNode {
 	metadata := extractHTTPRouteMetadata(route)
-	return toHierarchyNode(types.ResourceKindHTTPRoute, route.Name, route.Namespace, metadata)
+	return sm.toHierarchyNode(types.ResourceKindHTTPRoute, route.Name, route.Namespace, metadata)
 }
 
 func getAnnotationValue(annotations map[string]string, key string) string {
@@ -579,7 +590,7 @@ func serviceReferencedByHTTPRoute(httpRoute types.HierarchyNode, serviceName str
 }
 
 // findMatchingPods returns all pods that match the service selector
-func findMatchingPods(service *corev1.Service, pods []corev1.Pod) []types.HierarchyNode {
+func (sm *StateManager) findMatchingPods(service *corev1.Service, pods []corev1.Pod) []types.HierarchyNode {
 	var matchingPods []types.HierarchyNode
 	for _, pod := range pods {
 		if pod.Namespace != service.Namespace {
@@ -591,15 +602,15 @@ func findMatchingPods(service *corev1.Service, pods []corev1.Pod) []types.Hierar
 		if !labelsMatch(service.Spec.Selector, pod.Labels) {
 			continue
 		}
-		matchingPods = append(matchingPods, podToHierarchyNode(pod))
+		matchingPods = append(matchingPods, sm.podToHierarchyNode(pod))
 	}
 	return matchingPods
 }
 
 // createServiceNodeWithPods creates a service node with matching pods already included
-func createServiceNodeWithPods(service corev1.Service, pods []corev1.Pod) types.HierarchyNode {
-	serviceNode := serviceToHierarchyNode(service)
-	serviceNode.Relatives = findMatchingPods(&service, pods)
+func (sm *StateManager) createServiceNodeWithPods(service corev1.Service, pods []corev1.Pod) types.HierarchyNode {
+	serviceNode := sm.serviceToHierarchyNode(service)
+	serviceNode.Relatives = sm.findMatchingPods(&service, pods)
 	return serviceNode
 }
 
@@ -618,7 +629,7 @@ func findServiceByName(services []corev1.Service, name, namespace string) (corev
 }
 
 // findServicesForHTTPRoute returns all services referenced by the HTTPRoute
-func findServicesForHTTPRoute(route gatewayv1beta1.HTTPRoute, services []corev1.Service, pods []corev1.Pod) []types.HierarchyNode {
+func (sm *StateManager) findServicesForHTTPRoute(route gatewayv1beta1.HTTPRoute, services []corev1.Service, pods []corev1.Pod) []types.HierarchyNode {
 	var serviceNodes []types.HierarchyNode
 	for _, rule := range route.Spec.Rules {
 		for _, backendRef := range rule.BackendRefs {
@@ -627,7 +638,7 @@ func findServicesForHTTPRoute(route gatewayv1beta1.HTTPRoute, services []corev1.
 			if !found {
 				continue
 			}
-			serviceNode := createServiceNodeWithPods(service, pods)
+			serviceNode := sm.createServiceNodeWithPods(service, pods)
 			serviceNodes = append(serviceNodes, serviceNode)
 		}
 	}
@@ -690,8 +701,8 @@ func (sm *StateManager) BuildInitialState(ctx context.Context, client client.Cli
 		if !found {
 			continue
 		}
-		routeNode := httpRouteToHierarchyNode(route)
-		routeNode.Relatives = findServicesForHTTPRoute(route, services.Items, pods.Items)
+		routeNode := sm.httpRouteToHierarchyNode(route)
+		routeNode.Relatives = sm.findServicesForHTTPRoute(route, services.Items, pods.Items)
 		sm.hierarchy[namespaceIndex].Relatives = append(sm.hierarchy[namespaceIndex].Relatives, routeNode)
 	}
 
@@ -703,7 +714,7 @@ func (sm *StateManager) BuildInitialState(ctx context.Context, client client.Cli
 		if sm.serviceAlreadyInHTTPRoute(service.Name, sm.hierarchy[namespaceIndex]) {
 			continue
 		}
-		serviceNode := createServiceNodeWithPods(service, pods.Items)
+		serviceNode := sm.createServiceNodeWithPods(service, pods.Items)
 		sm.hierarchy[namespaceIndex].Relatives = append(sm.hierarchy[namespaceIndex].Relatives, serviceNode)
 	}
 
@@ -718,7 +729,7 @@ func (sm *StateManager) BuildInitialState(ctx context.Context, client client.Cli
 		if podMatchesAnyService(pod, sm.hierarchy[namespaceIndex]) {
 			continue
 		}
-		podNode := podToHierarchyNode(pod)
+		podNode := sm.podToHierarchyNode(pod)
 		sm.hierarchy[namespaceIndex].Relatives = append(sm.hierarchy[namespaceIndex].Relatives, podNode)
 	}
 
@@ -775,4 +786,37 @@ func (sm *StateManager) findNamespaceIndex(namespaceName string) (int, bool) {
 		return i, true
 	}
 	return -1, false
+}
+
+// UpdateServiceHealth updates health information for a service
+func (sm *StateManager) UpdateServiceHealth(serviceName, namespace string, healthInfo *types.ServiceHealthInfo) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	serviceKey := fmt.Sprintf("%s/%s", namespace, serviceName)
+	sm.healthData[serviceKey] = healthInfo
+
+	sm.updateServiceHealthInHierarchy(serviceName, namespace, healthInfo)
+	sm.notifySubscribers()
+}
+
+// updateServiceHealthInHierarchy updates health info in the hierarchy nodes
+func (sm *StateManager) updateServiceHealthInHierarchy(serviceName, namespace string, healthInfo *types.ServiceHealthInfo) {
+	for i := range sm.hierarchy {
+		sm.updateNodeHealthInfo(&sm.hierarchy[i], serviceName, namespace, healthInfo)
+	}
+}
+
+// updateNodeHealthInfo recursively updates health info in hierarchy nodes
+func (sm *StateManager) updateNodeHealthInfo(node *types.HierarchyNode, serviceName, namespace string, healthInfo *types.ServiceHealthInfo) {
+	if node.Kind == types.ResourceKindService &&
+		node.Name == serviceName &&
+		node.Namespace != nil &&
+		*node.Namespace == namespace {
+		node.HealthInfo = healthInfo
+	}
+
+	for i := range node.Relatives {
+		sm.updateNodeHealthInfo(&node.Relatives[i], serviceName, namespace, healthInfo)
+	}
 }

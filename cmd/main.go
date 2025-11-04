@@ -185,6 +185,13 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Setup health checker
+	healthChecker := controller.NewHealthChecker(mgr.GetClient(), stateManager)
+	if err = healthChecker.SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create health checker")
+		os.Exit(1)
+	}
+
 	// +kubebuilder:scaffold:builder
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
@@ -197,6 +204,9 @@ func main() {
 	}
 
 	ctx := ctrl.SetupSignalHandler()
+
+	// Start state manager immediately so it can process updates
+	go stateManager.Start(ctx)
 
 	srv := server.NewServer(stateManager, staticDir, serverPort, updateChan)
 	go func() {
@@ -230,8 +240,6 @@ func main() {
 	}
 
 	setupLog.Info("initial cluster state built successfully")
-
-	go stateManager.Start(ctx)
 
 	<-ctx.Done()
 }

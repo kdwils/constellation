@@ -1,32 +1,45 @@
-export type Kind = "Namespace" | "Ingress" | "HTTPRoute" | "Service" | "Pod";
+export type HealthStatus = 'healthy' | 'unhealthy' | 'unknown'
 
-export interface ContainerPortInfo {
-    port: number;
-    name?: string;
-    protocol?: string;
+export interface HealthCheckEntry {
+  timestamp: string
+  status: HealthStatus
+  latency: number
+  error?: string
+  url: string
+  method: string
+  response_code?: number
 }
 
-export interface ResourceNode {
-    kind: Kind;
-    name: string;
-    namespace?: string;
-    relatives?: ResourceNode[];
-    health?: "Healthy" | "Degraded" | "Error" | "Unknown";
-    hostnames?: string[];
-    selectors?: Record<string, string>;
-    ports?: number[];
-    port_mappings?: string[];
-    target_ports?: number[];
-    target_port_names?: string[];
-    container_ports?: ContainerPortInfo[];
-    labels?: Record<string, string>;
-    phase?: string;
-    backend_refs?: string[];
-    service_type?: string;
-    cluster_ips?: string[];
-    external_ips?: string[];
-    pod_ips?: string[];
-    group?: string;
-    display_name?: string;
-    ignore?: boolean;
+export interface ServiceHealthInfo {
+  service_name: string
+  namespace: string
+  last_check: string
+  status: HealthStatus
+  uptime: number
+  history: HealthCheckEntry[]
+  url: string
+}
+
+export interface HierarchyNode {
+  kind: string
+  name: string
+  namespace?: string
+  relatives?: HierarchyNode[]
+  hostnames?: string[]
+  health_info?: ServiceHealthInfo
+}
+
+export interface ServiceHealthData {
+  status: HealthStatus
+  healthCheckHistory: HealthCheckEntry[]
+}
+
+export interface ServiceCardData {
+  name: string
+  namespace: string
+  status: HealthStatus
+  lastUpdate: string
+  latency: number
+  url: string
+  serviceHealth: ServiceHealthData
 }
