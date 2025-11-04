@@ -5,15 +5,24 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/kdwils/constellation/internal/types"
+)
+
+const (
+	writeWait      = 10 * time.Second
+	pongWait       = 60 * time.Second
+	pingPeriod     = (pongWait * 9) / 10
+	maxMessageSize = 512
 )
 
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool {
 		return true
 	},
+	HandshakeTimeout: 5 * time.Second,
 }
 
 type StateProvider interface {
@@ -83,26 +92,63 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("WebSocket upgrade error: %v", err), http.StatusBadRequest)
 		return
 	}
-	defer conn.Close()
+	defer func() {
+		fmt.Printf("WebSocket connection closed\n")
+		conn.Close()
+	}()
+
+	fmt.Printf("WebSocket connection established\n")
+
+	conn.SetReadLimit(maxMessageSize)
+	conn.SetReadDeadline(time.Now().Add(pongWait))
+	conn.SetPongHandler(func(string) error {
+		conn.SetReadDeadline(time.Now().Add(pongWait))
+		return nil
+	})
 
 	stateChan := s.stateProvider.Subscribe()
 	defer s.stateProvider.Unsubscribe(stateChan)
 
-	if err := s.stateProvider.PushUpdate(conn); err != nil {
+	if err := s.writeMessage(conn, s.stateProvider.GetHierarchy()); err != nil {
+		fmt.Printf("WebSocket initial write error: %v\n", err)
 		return
 	}
+
+	go func() {
+		for {
+			_, _, err := conn.ReadMessage()
+			if err != nil {
+				fmt.Printf("WebSocket read error: %v\n", err)
+				return
+			}
+		}
+	}()
+
+	pingTicker := time.NewTicker(pingPeriod)
+	defer pingTicker.Stop()
 
 	for {
 		select {
 		case <-stateChan:
-			if err := s.stateProvider.PushUpdate(conn); err != nil {
+			if err := s.writeMessage(conn, s.stateProvider.GetHierarchy()); err != nil {
 				fmt.Printf("WebSocket write error: %v\n", err)
+				return
+			}
+		case <-pingTicker.C:
+			conn.SetWriteDeadline(time.Now().Add(writeWait))
+			if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+				fmt.Printf("WebSocket ping error: %v\n", err)
 				return
 			}
 		case <-r.Context().Done():
 			return
 		}
 	}
+}
+
+func (s *Server) writeMessage(conn *websocket.Conn, data any) error {
+	conn.SetWriteDeadline(time.Now().Add(writeWait))
+	return conn.WriteJSON(data)
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -125,7 +171,6 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) staticFileHandler(fileServer http.Handler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		fmt.Printf("Static file handler: %s %s\n", r.Method, r.URL.Path)
 		fileServer.ServeHTTP(w, r)
 	}
 }
