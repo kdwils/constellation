@@ -1,0 +1,9 @@
+apiVersion: health.kyledev.co/v1alpha1
+kind: HealthCheck
+metadata:
+  labels:
+    app.kubernetes.io/name: constellation
+    app.kubernetes.io/managed-by: kustomize
+  name: healthcheck-sample
+spec:
+  # TODO(user): Add fields here
