@@ -1,45 +1,18 @@
-import type { HierarchyNode, ServiceCardData, ServiceHealthData } from '../types'
+import type { ServiceHealthInfo, ServiceCardData } from '../types'
 
-export function transformToServiceCards(hierarchyNodes: HierarchyNode[]): ServiceCardData[] {
-  const serviceCards: ServiceCardData[] = []
-
-  for (const node of hierarchyNodes) {
-    if (node.kind === 'Service' && node.health_info) {
-      const serviceHealth = extractServiceHealth(node)
-
-      serviceCards.push({
-        name: node.name,
-        namespace: node.namespace || 'default',
-        status: node.health_info.status,
-        lastUpdate: node.health_info.last_check,
-        latency: calculateAverageLatency(node.health_info.history),
-        url: node.health_info.url,
-        serviceHealth
-      })
+export function transformToServiceCards(healthData: ServiceHealthInfo[]): ServiceCardData[] {
+  return healthData.map(health => ({
+    name: health.service_name,
+    namespace: health.namespace,
+    status: health.status,
+    lastUpdate: health.last_check,
+    latency: calculateAverageLatency(health.history),
+    url: health.url,
+    serviceHealth: {
+      status: health.status,
+      healthCheckHistory: health.history || []
     }
-
-    if (node.relatives && node.relatives.length > 0) {
-      serviceCards.push(...transformToServiceCards(node.relatives))
-    }
-  }
-
-  return serviceCards
-}
-
-function extractServiceHealth(serviceNode: HierarchyNode): ServiceHealthData {
-  const serviceHealthInfo = serviceNode.health_info
-
-  if (!serviceHealthInfo) {
-    return {
-      status: 'unknown',
-      healthCheckHistory: []
-    }
-  }
-
-  return {
-    status: serviceHealthInfo.status,
-    healthCheckHistory: serviceHealthInfo.history || []
-  }
+  }))
 }
 
 function calculateAverageLatency(history: Array<{ latency: number }>): number {

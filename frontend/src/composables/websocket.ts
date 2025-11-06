@@ -1,11 +1,12 @@
 import { ref, onUnmounted } from 'vue'
+import type { ServiceHealthInfo } from '../types'
 
 export function websocket() {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
   const wsUrl = `${protocol}//${window.location.host}/ws`
 
   const isConnected = ref(false)
-  const lastMessage = ref<any>(null)
+  const lastMessage = ref<ServiceHealthInfo[] | null>(null)
 
   const websocket = new WebSocket(wsUrl)
 

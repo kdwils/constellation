@@ -23,11 +23,14 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	healthv1alpha1 "github.com/kdwils/constellation/api/v1alpha1"
 	"github.com/kdwils/constellation/internal/healthcheck"
 )
+
+const healthCheckFinalizer = "health.kyledev.co/finalizer"
 
 // HealthCheckReconciler reconciles a HealthCheck object
 type HealthCheckReconciler struct {
@@ -53,8 +56,15 @@ func (r *HealthCheckReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	serviceKey := fmt.Sprintf("%s/%s", healthCheck.ObjectMeta.Namespace, healthCheck.ObjectMeta.Name)
 
 	if !healthCheck.DeletionTimestamp.IsZero() {
-		logger.Info("unregistering health check", "service", serviceKey)
-		r.HealthChecker.UnregisterHealthTarget(serviceKey)
+		if controllerutil.ContainsFinalizer(&healthCheck, healthCheckFinalizer) {
+			logger.Info("unregistering health check", "service", serviceKey)
+			r.HealthChecker.UnregisterHealthTarget(serviceKey)
+
+			controllerutil.RemoveFinalizer(&healthCheck, healthCheckFinalizer)
+			if err := r.Update(ctx, &healthCheck); err != nil {
+				return ctrl.Result{}, err
+			}
+		}
 		return ctrl.Result{}, nil
 	}
 
@@ -62,6 +72,14 @@ func (r *HealthCheckReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 
 	logger.Info("registering custom health check", "identifier", serviceKey, "checks", len(checks))
 	r.HealthChecker.RegisterHealthTarget(serviceKey, checks)
+
+	if !controllerutil.ContainsFinalizer(&healthCheck, healthCheckFinalizer) {
+		logger.Info("adding finalizer")
+		controllerutil.AddFinalizer(&healthCheck, healthCheckFinalizer)
+		if err := r.Update(ctx, &healthCheck); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
 
 	return ctrl.Result{}, nil
 }
