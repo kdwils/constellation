@@ -7,11 +7,11 @@ import { getStatusColor } from '../utils/statusColors'
 import type { ServiceCardData, HealthStatus } from '../types'
 
 const { lastMessage } = websocket()
-const hierarchyData = computed(() => lastMessage.value || [])
+const healthData = computed(() => lastMessage.value || [])
 const isLoading = computed(() => !lastMessage.value)
 
 const serviceCards = computed<ServiceCardData[]>(() => {
-  return transformToServiceCards(hierarchyData.value)
+  return transformToServiceCards(healthData.value)
 })
 
 const overallStatus = computed<HealthStatus>(() => {

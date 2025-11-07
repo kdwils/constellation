@@ -1,0 +1,12 @@
+apiVersion: health.kyledev.co/v1alpha1
+kind: HealthCheck
+metadata:
+  name: blog-healthcheck
+  namespace: default
+spec:
+  checks:
+    - name: blog-root
+      url: https://blog.kyledev.co/
+      interval: 30s
+      timeout: 5s
+      protocol: https

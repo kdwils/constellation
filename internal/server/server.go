@@ -25,26 +25,23 @@ var upgrader = websocket.Upgrader{
 	HandshakeTimeout: 5 * time.Second,
 }
 
-type StateProvider interface {
-	GetHierarchy() []types.HierarchyNode
-	Subscribe() chan []types.HierarchyNode
-	Unsubscribe(chan []types.HierarchyNode)
-	PushUpdate(conn *websocket.Conn) error
+type HealthDataProvider interface {
+	GetAllHealthData() []*types.ServiceHealthInfo
+	Subscribe() chan []*types.ServiceHealthInfo
+	Unsubscribe(chan []*types.ServiceHealthInfo)
 }
 
 type Server struct {
-	stateProvider StateProvider
-	staticDir     string
-	port          int
-	updateChan    chan bool
+	healthProvider HealthDataProvider
+	staticDir      string
+	port           int
 }
 
-func NewServer(stateProvider StateProvider, staticDir string, port int, updateChan chan bool) *Server {
+func NewServer(healthProvider HealthDataProvider, staticDir string, port int) *Server {
 	return &Server{
-		stateProvider: stateProvider,
-		staticDir:     staticDir,
-		port:          port,
-		updateChan:    updateChan,
+		healthProvider: healthProvider,
+		staticDir:      staticDir,
+		port:           port,
 	}
 }
 
@@ -77,10 +74,10 @@ func (s *Server) Serve(ctx context.Context) error {
 }
 
 func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
-	hierarchy := s.stateProvider.GetHierarchy()
+	healthData := s.healthProvider.GetAllHealthData()
 
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(hierarchy); err != nil {
+	if err := json.NewEncoder(w).Encode(healthData); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -106,10 +103,10 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		return nil
 	})
 
-	stateChan := s.stateProvider.Subscribe()
-	defer s.stateProvider.Unsubscribe(stateChan)
+	healthChan := s.healthProvider.Subscribe()
+	defer s.healthProvider.Unsubscribe(healthChan)
 
-	if err := s.writeMessage(conn, s.stateProvider.GetHierarchy()); err != nil {
+	if err := s.writeMessage(conn, s.healthProvider.GetAllHealthData()); err != nil {
 		fmt.Printf("WebSocket initial write error: %v\n", err)
 		return
 	}
@@ -129,8 +126,8 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	for {
 		select {
-		case <-stateChan:
-			if err := s.writeMessage(conn, s.stateProvider.GetHierarchy()); err != nil {
+		case data := <-healthChan:
+			if err := s.writeMessage(conn, data); err != nil {
 				fmt.Printf("WebSocket write error: %v\n", err)
 				return
 			}
@@ -152,8 +149,8 @@ func (s *Server) writeMessage(conn *websocket.Conn, data any) error {
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	hierarchy := s.stateProvider.GetHierarchy()
-	ready := len(hierarchy) > 0
+	healthData := s.healthProvider.GetAllHealthData()
+	ready := len(healthData) > 0
 
 	if !ready {
 		w.WriteHeader(http.StatusServiceUnavailable)

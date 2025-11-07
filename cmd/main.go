@@ -36,7 +36,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 	gatewayv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
 
+	healthv1alpha1 "github.com/kdwils/constellation/api/v1alpha1"
 	"github.com/kdwils/constellation/internal/controller"
+	"github.com/kdwils/constellation/internal/healthcheck"
 	"github.com/kdwils/constellation/internal/server"
 	// +kubebuilder:scaffold:imports
 )
@@ -50,6 +52,7 @@ func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 	utilruntime.Must(gatewayv1beta1.Install(scheme))
 
+	utilruntime.Must(healthv1alpha1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
 }
 
@@ -157,41 +160,28 @@ func main() {
 		os.Exit(1)
 	}
 
-	updateChan := make(chan bool, 1000)
-	stateManager := controller.NewStateManager(updateChan)
+	healthChecker := healthcheck.NewHealthChecker()
 
-	// Setup individual controllers for each resource type
-	namespaceReconciler := controller.NewNamespaceReconciler(mgr, stateManager)
-	if err = namespaceReconciler.SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "Namespace")
-		os.Exit(1)
-	}
-
-	serviceReconciler := controller.NewServiceReconciler(mgr, stateManager)
+	serviceReconciler := controller.NewServiceReconciler(mgr, healthChecker)
 	if err = serviceReconciler.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Service")
 		os.Exit(1)
 	}
 
-	podReconciler := controller.NewPodReconciler(mgr, stateManager)
+	podReconciler := controller.NewPodReconciler(mgr, healthChecker)
 	if err = podReconciler.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Pod")
 		os.Exit(1)
 	}
 
-	httpRouteReconciler := controller.NewHTTPRouteReconciler(mgr, stateManager)
-	if err = httpRouteReconciler.SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "HTTPRoute")
+	if err := (&controller.HealthCheckReconciler{
+		Client:        mgr.GetClient(),
+		Scheme:        mgr.GetScheme(),
+		HealthChecker: healthChecker,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "HealthCheck")
 		os.Exit(1)
 	}
-
-	// Setup health checker
-	healthChecker := controller.NewHealthChecker(mgr.GetClient(), stateManager)
-	if err = healthChecker.SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create health checker")
-		os.Exit(1)
-	}
-
 	// +kubebuilder:scaffold:builder
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
@@ -206,9 +196,9 @@ func main() {
 	ctx := ctrl.SetupSignalHandler()
 
 	// Start state manager immediately so it can process updates
-	go stateManager.Start(ctx)
+	go healthChecker.Start(ctx)
 
-	srv := server.NewServer(stateManager, staticDir, serverPort, updateChan)
+	srv := server.NewServer(healthChecker, staticDir, serverPort)
 	go func() {
 		setupLog.Info("starting constellation server", "port", serverPort, "static-dir", staticDir)
 		if err := srv.Serve(ctx); err != nil {
@@ -229,13 +219,6 @@ func main() {
 	setupLog.Info("waiting for manager cache to sync")
 	if !mgr.GetCache().WaitForCacheSync(ctx) {
 		setupLog.Error(nil, "failed to wait for cache sync")
-		os.Exit(1)
-	}
-
-	// Build initial state from existing resources
-	setupLog.Info("building initial cluster state")
-	if err := stateManager.BuildInitialState(ctx, mgr.GetClient()); err != nil {
-		setupLog.Error(err, "failed to build initial state")
 		os.Exit(1)
 	}
 
